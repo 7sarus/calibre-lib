@@ -1,14 +1,22 @@
-.DS_Store
-/node_modules
-/build
-/standalone-executables
-/legacy
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
 
-*.chm
-*.pdf
-*.djvu
-*.epub
-*.txt
-*.tgz
+# Distribution / packaging
+*.zip
+*.egg-info/
+dist/
+build/
 
-ws.session
+# Calibre cache / runtime
+*.calibre_tmp
+.calibre_test/
+
+# Environment / IDE
+.env
+.venv
+env/
+venv/
+.idea/
+.vscode/
