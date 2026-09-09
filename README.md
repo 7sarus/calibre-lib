@@ -103,6 +103,14 @@ Configure:
 
 ---
 
+## 🙏 Acknowledgements & Disclaimer
+
+- **Upstream Origin**: This project is adapted and re-architected from [`obsfx/libgen-downloader`](https://github.com/obsfx/libgen-downloader) by Ömercan Balandı, translating its mirror handling and scraping concepts into a native Python/Qt Calibre plugin.
+- **AI / LLM Assisted**: This rewrite was developed with the assistance of an LLM pair programmer.
+- **For Fun**: This is strictly a "just for fun" experimental hobby project created for personal exploration and enjoyment.
+
+---
+
 ## 📜 License
 
 [WTFPL](LICENSE)
