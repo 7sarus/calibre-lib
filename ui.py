@@ -35,3 +35,4 @@ class LibgenAction(InterfaceAction):
     def show_dialog(self):
         d = LibgenDialog(self.gui)
         d.exec()
+
