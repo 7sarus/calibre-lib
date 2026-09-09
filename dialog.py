@@ -487,3 +487,4 @@ class LibgenDialog(QDialog):
                 event.ignore()
                 return
         event.accept()
+
