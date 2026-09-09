@@ -1,130 +1,95 @@
+# LibGen Calibre Store Plugin
 
-# libgen-downloader
+A native **Calibre Store Plugin** that integrates Library Genesis directly into Calibre's built-in **"Get Books"** interface.
 
-[![npm version](https://badge.fury.io/js/libgen-downloader.svg)](https://badge.fury.io/js/libgen-downloader)
+Search books directly inside Calibre, lock or filter by language and format (EPUB, PDF, MOBI, etc.), and download books directly into your Calibre library with a single click.
 
+---
 
-`libgen-downloader` is a command-line tool for searching and downloading ebooks from **LibGen**. Built with `Node.js`, `TypeScript`, `React`, `Ink`, and `Zustand`, it works by visiting LibGen’s web pages, parsing the HTML, and displaying results. Since it relies on LibGen’s servers, you may occasionally encounter connection errors when searching, downloading, or loading more pages.
+## ✨ Features
 
-## Important Update
-After the original `libgen` mirrors are blocked and not available anymore (see their status from here https://open-slum.org/), `libgen-downloader` now uses the `libgen+` mirrors as its primary source. You can see the new available mirrors from [configuration](https://github.com/obsfx/libgen-downloader/blob/configuration/config.v3.json).
+- **Native Calibre Integration**: Subclasses `calibre.gui2.store.StorePlugin`, showing up directly in Calibre's **Get Books** search.
+- **Language & Format Locking**:
+  - Lock in a preferred language (e.g. English, Spanish, French, German, Russian, etc.).
+  - Lock in a preferred format (e.g. EPUB, PDF, MOBI, AZW3, DJVU).
+  - Configurable filter modes: **Strict** (hide non-matching files) or **Prioritize** (surface matching formats/languages at the top).
+- **Multi-Mirror Failover**: Automatically cycles through active LibGen mirrors (`libgen.li`, `libgen.vg`, `libgen.gl`, `libgen.bz`, `libgen.la`, `libgen.is`) if a mirror is blocked or times out.
+- **One-Click Download**: Automatically resolves authenticated direct download links and cover images during metadata lookup.
+- **Zero External Dependencies**: Uses Calibre's bundled Python, Qt bindings (`qt.core`), and BeautifulSoup (`bs4`).
 
-https://github.com/user-attachments/assets/3d92eb78-1567-478d-a0d1-5724f647be10
+---
 
-https://github.com/user-attachments/assets/9896d457-ccbf-40aa-ae6b-c253f7a97824
+## 🚀 Installation
 
+### Option 1: Using Make (Recommended)
 
-
-## Installation
-
-
-if you have already installed `NodeJS` and `npm`, you can install it using `npm`:
-
-```
-npm i -g libgen-downloader
-```
-
-or you can download one of the `standalone executable` versions.
-
-#### [Standalone Executables](https://github.com/obsfx/libgen-downloader/releases)
-
-**macOS users:** After downloading, you need to remove the quarantine attribute and make it executable:
+Run:
 ```bash
-xattr -c ./libgen-downloader-macos-*
-chmod +x ./libgen-downloader-macos-*
+make install
 ```
 
-**Linux users:** Make it executable:
-```bash
-chmod +x ./libgen-downloader-linux-*
-```
+This packages `libgen_store.zip` and installs it via `calibre-customize -a libgen_store.zip`.
 
-## Features
+### Option 2: Manual Installation
 
-- Interactive user interface.
-- Non app blocking direct downloading.
-- Bulk downloading.
-- Alternative download options.
-- Command line parameters;
+1. Build the zip file:
+   ```bash
+   zip -q libgen_store.zip __init__.py store.py scraper.py config.py plugin-import-name.txt
+   ```
+2. Open **Calibre**.
+3. Go to **Preferences** -> **Plugins** (under *Advanced*).
+4. Click **Load plugin from file** and select `libgen_store.zip`.
+5. Restart Calibre.
+
+---
+
+## ⚙️ Configuration
+
+In Calibre, go to:
+**Preferences** -> **Plugins** -> **Store Plugins** -> select **LibGen** -> click **Customize plugin**.
+
+From the configuration dialog, you can configure:
+- **Primary Mirror URL**: Default `https://libgen.li`.
+- **Fallback Mirrors**: Comma-separated list of fallback domains.
+- **Connection Timeout**: Network timeout in seconds.
+- **Lock / Preferred Language**: Filter or prioritize books by language.
+- **Lock / Preferred Format**: Filter or prioritize books by format (EPUB, PDF, MOBI, etc.).
+- **Filter Enforcement**:
+  - `Prioritize`: Surfaces matching language/format books at the top of search results.
+  - `Strict`: Only returns books matching your chosen language and format.
+- **Max Results per Search**: Results count to retrieve.
+
+---
+
+## 📖 Usage
+
+1. Open Calibre.
+2. Click **Get Books** in the main toolbar.
+3. In the left panel under **Stores**, ensure **LibGen** is checked.
+4. Type your search query (Title, Author, or ISBN) and click **Search**.
+5. Right-click any result to:
+   - Click **Download** to download the book directly into your Calibre library.
+   - Click **Open Store** to view the book's detail page in your browser.
+
+---
+
+## 🛠️ Development & Testing
+
+- Build the `.zip` package:
+  ```bash
+  make build
   ```
-  Usage
-  	$ libgen-downloader <input>
-
-  Options
-  	-s, --search <query>      search for a book
-  	-b, --bulk <MD5LIST.txt>  start the app in bulk downloading mode
-  	-u, --url <MD5>           get the download URL
-  	-d, --download <MD5>      download the file
-  	-h, --help                display help
-
-  Examples
-  	$ libgen-downloader    (start the app in interactive mode witout flags)
-  	$ libgen-downloader -s "The Art of War"
-  	$ libgen-downloader -b ./MD5_LIST_1695686580524.txt
-  	$ libgen-downloader -u 1234567890abcdef1234567890abcdef
-  	$ libgen-downloader -d 1234567890abcdef1234567890abcdef
-
+- Run integration search test in Calibre debug mode:
+  ```bash
+  make test
+  ```
+- Uninstall plugin:
+  ```bash
+  make uninstall
   ```
 
-
-
-## Changelogs
-
-v3.0.0
-
-- Added new `libgen+` mirrors as primary source. App is now usable as long as the `libgen+` mirrors are available.
-- Dropped `search by` filtering options to make it compatible with the new `libgen+` mirrors.
-- Dropped `alternative downloads` feature to make it compatible with the new `libgen+` mirrors.
-
 ---
 
-v2.0.0
+## 📜 License
 
-- Added alternative downloads.
-- Added new download progress indicators.
-- Added a cache mechanism to quickly retrieve previously searched results..
-- Added new CLI parameter `-s, --search` to search queries directly in the command line.
-- Added new shortcut keys to simplify usage:
-	- `[J]` and `[K]` to move up and down for vimmers.
-	- `[TAB]` to add an entry to the bulk download queue.
-	- `[D]` to download an entry directly.
-- Dropped result filtering. Instead added `Search by` filtering options to filter in columns like the original libgen search functionality.
-
----
-
-v1.3.7
-
-- Changed cli module and usage.
-- Refactored downloading processes.
-- README simplified.
-
----
-
-v1.3
-
-- Whole app was rewritten using `React`, `Ink` and `Zustand`.
-- Added result filtering.
-- Now you do not have to wait while downloading files using the `direct download` option.
-- New version notifier.
-- Due to the https://gen.lib.rus.ec is banned in my country, now libgen-downloader fetches the latest configuration file from the [configuration](https://github.com/obsfx/libgen-downloader/tree/configuration) branch and finds an available mirror dynamically.
-
----
-
-v1.2
-
-- Direct download option added as a cli functionality.
-
----
-
-v1.1
-
-- New and mostly resizeable UI.
-
----
-
-v1.0
-
-- Addded bulk downloading
-- Improved error handling.
-- When a connection error occurs, `libgen-downloader` does not shut down instantly. It tries 5 times to do same request with 3 seconds of delay.
-- New customized UI module.
+[WTFPL](LICENSE)
