@@ -16,7 +16,7 @@ class LibgenDownloaderPlugin(InterfaceActionBase):
     )
     supported_platforms = ["windows", "osx", "linux"]
     author = "7sarus"
-    version = (1, 1, 0)
+    version = (0, 1, 0)
     minimum_calibre_version = (5, 0, 0)
 
     actual_plugin = "calibre_plugins.libgen_store.ui:LibgenAction"

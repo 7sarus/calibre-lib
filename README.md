@@ -1,6 +1,8 @@
-# LibGen Downloader (Calibre Plugin)
+# Calibre LibGen Downloader (`calibre-lib`)
 
-[![GitHub stars](https://img.shields.io/github/stars/7sarus/libgen-downloader?style=social)](https://github.com/7sarus/libgen-downloader/stargazers)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/7sarus/calibre-lib?include_prereleases&color=blue)](https://github.com/7sarus/calibre-lib/releases)
+[![GitHub stars](https://img.shields.io/github/stars/7sarus/calibre-lib?style=social)](https://github.com/7sarus/calibre-lib/stargazers)
+[![GitHub all releases](https://img.shields.io/github/downloads/7sarus/calibre-lib/total)](https://github.com/7sarus/calibre-lib/releases)
 [![License: WTFPL](https://img.shields.io/badge/License-WTFPL-brightgreen.svg)](LICENSE)
 
 A native **Calibre User Interface Action Plugin** that adds a dedicated **LibGen Downloader** button to Calibre's main toolbar.
@@ -31,25 +33,21 @@ Search books directly across Library Genesis mirrors, lock or filter by language
 
 ## 🚀 Installation
 
-### Option 1: Using Make (Recommended)
+### Quick Install (Pre-built Release)
 
-Run:
-```bash
-make install
-```
-
-This packages `libgen_downloader.zip` and installs it via `calibre-customize -a libgen_downloader.zip`.
-
-### Option 2: Manual Installation
-
-1. Build the zip file:
-   ```bash
-   zip -q -r libgen_downloader.zip __init__.py ui.py dialog.py scraper.py config.py plugin-import-name-libgen_store.txt images/icon.png
-   ```
+1. Download `libgen_downloader.zip` from the [Latest Release](https://github.com/7sarus/calibre-lib/releases).
 2. Open **Calibre**.
 3. Go to **Preferences** -> **Plugins** (under *Advanced*).
 4. Click **Load plugin from file** and select `libgen_downloader.zip`.
 5. Restart Calibre.
+
+### Install from Source (Using Make)
+
+```bash
+git clone https://github.com/7sarus/calibre-lib.git
+cd calibre-lib
+make install
+```
 
 ---
 
@@ -96,6 +94,12 @@ Configure:
   ```bash
   make uninstall
   ```
+
+---
+
+## 📈 Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=7sarus/calibre-lib&type=Date)](https://star-history.com/#7sarus/calibre-lib&Date)
 
 ---
 
