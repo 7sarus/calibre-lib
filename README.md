@@ -1,24 +1,31 @@
-# LibGen Calibre Store Plugin
+# LibGen Downloader (Calibre Plugin)
 
 [![GitHub stars](https://img.shields.io/github/stars/7sarus/libgen-downloader?style=social)](https://github.com/7sarus/libgen-downloader/stargazers)
 [![License: WTFPL](https://img.shields.io/badge/License-WTFPL-brightgreen.svg)](LICENSE)
 
-A native **Calibre Store Plugin** that integrates Library Genesis directly into Calibre's built-in **"Get Books"** interface.
+A native **Calibre User Interface Action Plugin** that adds a dedicated **LibGen Downloader** button to Calibre's main toolbar.
 
-Search books directly inside Calibre, lock or filter by language and format (EPUB, PDF, MOBI, etc.), and download books directly into your Calibre library with a single click.
+Search books directly across Library Genesis mirrors, lock or filter by language and format (EPUB, PDF, MOBI, AZW3, etc.), queue multiple books into a **Bulk Download Queue**, and download them all together directly into your Calibre library.
 
 ---
 
 ## ✨ Features
 
-- **Native Calibre Integration**: Subclasses `calibre.gui2.store.StorePlugin`, showing up directly in Calibre's **Get Books** search.
+- **Dedicated Toolbar Button & UI**: Adds a **LibGen** action button directly to Calibre's toolbar (`Ctrl+Shift+L` shortcut).
+- **Bulk Download Queue**:
+  - Search books and select multiple titles using checkboxes.
+  - Add selections to the **Bulk Queue** tab.
+  - Download all queued books in sequence with live progress tracking.
+  - Or click **Download Selected Now** for immediate one-click downloading.
+- **Direct Calibre Library Integration**: Downloaded books are automatically ingested by Calibre's native library adder (`Add Books`), automatically parsing book metadata and covers into your library without opening a web browser.
 - **Language & Format Locking**:
-  - Lock in a preferred language (e.g. English, Spanish, French, German, Russian, etc.).
-  - Lock in a preferred format (e.g. EPUB, PDF, MOBI, AZW3, DJVU).
-  - Configurable filter modes: **Strict** (hide non-matching files) or **Prioritize** (surface matching formats/languages at the top).
-- **Multi-Mirror Failover**: Automatically cycles through active LibGen mirrors (`libgen.li`, `libgen.vg`, `libgen.gl`, `libgen.bz`, `libgen.la`, `libgen.is`) if a mirror is blocked or times out.
-- **One-Click Download**: Automatically resolves authenticated direct download links and cover images during metadata lookup.
-- **Zero External Dependencies**: Uses Calibre's bundled Python, Qt bindings (`qt.core`), and BeautifulSoup (`bs4`).
+  - Filter or lock to a preferred language (English, Spanish, French, German, Russian, etc.).
+  - Filter or lock to a preferred format (EPUB, PDF, MOBI, AZW3, DJVU, CBR, CBZ).
+  - Configurable filter modes:
+    - **Prioritize**: Surfaces preferred language/format books at the top.
+    - **Strict**: Only returns books matching the chosen criteria.
+- **Multi-Mirror Failover**: Automatically cycles through active LibGen mirrors (`libgen.li`, `libgen.vg`, `libgen.gl`, `libgen.bz`, `libgen.is`).
+- **Zero External Dependencies**: Uses Calibre's bundled Python 3, Qt bindings (`qt.core`), and BeautifulSoup (`bs4`).
 
 ---
 
@@ -31,48 +38,47 @@ Run:
 make install
 ```
 
-This packages `libgen_store.zip` and installs it via `calibre-customize -a libgen_store.zip`.
+This packages `libgen_downloader.zip` and installs it via `calibre-customize -a libgen_downloader.zip`.
 
 ### Option 2: Manual Installation
 
 1. Build the zip file:
    ```bash
-   zip -q libgen_store.zip __init__.py store.py scraper.py config.py plugin-import-name-libgen_store.txt
+   zip -q -r libgen_downloader.zip __init__.py ui.py dialog.py scraper.py config.py plugin-import-name-libgen_store.txt images/icon.png
    ```
 2. Open **Calibre**.
 3. Go to **Preferences** -> **Plugins** (under *Advanced*).
-4. Click **Load plugin from file** and select `libgen_store.zip`.
+4. Click **Load plugin from file** and select `libgen_downloader.zip`.
 5. Restart Calibre.
+
+---
+
+## 📖 Usage
+
+1. Open **Calibre**.
+2. Click the **LibGen** button on the main toolbar (or press `Ctrl+Shift+L`).
+3. Type your search query and choose your preferred language and format.
+4. From the search results:
+   - Check the boxes for the books you want, then click **Add Selected to Bulk Queue**.
+   - Switch to the **Bulk Queue** tab and click **Start Bulk Download**.
+   - Or click **Download Selected Now** to immediately download and import.
+5. As books finish downloading, they will automatically appear in your Calibre library!
 
 ---
 
 ## ⚙️ Configuration
 
 In Calibre, go to:
-**Preferences** -> **Plugins** -> **Store Plugins** -> select **LibGen** -> click **Customize plugin**.
+**Preferences** -> **Plugins** -> **User interface action plugins** -> select **LibGen Downloader** -> click **Customize plugin**.
 
-From the configuration dialog, you can configure:
+Configure:
 - **Primary Mirror URL**: Default `https://libgen.li`.
 - **Fallback Mirrors**: Comma-separated list of fallback domains.
 - **Connection Timeout**: Network timeout in seconds.
-- **Lock / Preferred Language**: Filter or prioritize books by language.
-- **Lock / Preferred Format**: Filter or prioritize books by format (EPUB, PDF, MOBI, etc.).
-- **Filter Enforcement**:
-  - `Prioritize`: Surfaces matching language/format books at the top of search results.
-  - `Strict`: Only returns books matching your chosen language and format.
+- **Lock / Preferred Language**: Default language preference.
+- **Lock / Preferred Format**: Default format preference (EPUB, PDF, etc.).
+- **Filter Enforcement**: `Prioritize` or `Strict`.
 - **Max Results per Search**: Results count to retrieve.
-
----
-
-## 📖 Usage
-
-1. Open Calibre.
-2. Click **Get Books** in the main toolbar.
-3. In the left panel under **Stores**, ensure **LibGen** is checked.
-4. Type your search query (Title, Author, or ISBN) and click **Search**.
-5. Right-click any result to:
-   - Click **Download** to download the book directly into your Calibre library.
-   - Click **Open Store** to view the book's detail page in your browser.
 
 ---
 
@@ -82,7 +88,7 @@ From the configuration dialog, you can configure:
   ```bash
   make build
   ```
-- Run integration search test in Calibre debug mode:
+- Run integration search & module tests in Calibre debug mode:
   ```bash
   make test
   ```
