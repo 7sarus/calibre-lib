@@ -1,5 +1,8 @@
 # LibGen Calibre Store Plugin
 
+[![GitHub stars](https://img.shields.io/github/stars/7sarus/libgen-downloader?style=social)](https://github.com/7sarus/libgen-downloader/stargazers)
+[![License: WTFPL](https://img.shields.io/badge/License-WTFPL-brightgreen.svg)](LICENSE)
+
 A native **Calibre Store Plugin** that integrates Library Genesis directly into Calibre's built-in **"Get Books"** interface.
 
 Search books directly inside Calibre, lock or filter by language and format (EPUB, PDF, MOBI, etc.), and download books directly into your Calibre library with a single click.
@@ -34,7 +37,7 @@ This packages `libgen_store.zip` and installs it via `calibre-customize -a libge
 
 1. Build the zip file:
    ```bash
-   zip -q libgen_store.zip __init__.py store.py scraper.py config.py plugin-import-name.txt
+   zip -q libgen_store.zip __init__.py store.py scraper.py config.py plugin-import-name-libgen_store.txt
    ```
 2. Open **Calibre**.
 3. Go to **Preferences** -> **Plugins** (under *Advanced*).
