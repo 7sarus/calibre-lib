@@ -227,3 +227,32 @@ class LibgenScraper:
         except Exception:
             return None, None
 
+    def download_file(self, download_url, destination_path, progress_callback=None):
+        """
+        Streams a remote file to destination_path with chunked writing.
+        Calls progress_callback(bytes_read, total_bytes) on each chunk.
+        """
+        b = self._get_browser()
+        resp = b.open(download_url, timeout=self.timeout * 3)
+
+        total_bytes = 0
+        try:
+            total_bytes = int(resp.headers.get("Content-Length", 0))
+        except (ValueError, TypeError):
+            total_bytes = 0
+
+        bytes_read = 0
+        chunk_size = 64 * 1024  # 64 KB
+
+        with open(destination_path, "wb") as f:
+            while True:
+                chunk = resp.read(chunk_size)
+                if not chunk:
+                    break
+                f.write(chunk)
+                bytes_read += len(chunk)
+                if progress_callback:
+                    progress_callback(bytes_read, total_bytes)
+
+        return destination_path
+

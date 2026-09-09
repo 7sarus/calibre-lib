@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Test script for the LibGen Calibre Store plugin.
+Test script for the LibGen Downloader Calibre InterfaceAction plugin.
 Run via: calibre-debug test_plugin.py
 """
 
@@ -15,37 +15,37 @@ def main():
     from calibre.customize.ui import initialize_plugins
     initialize_plugins()
 
-    print("Testing LibGen plugin import...")
+    print("Testing LibGen plugin modules import...")
     try:
-        m = importlib.import_module("calibre_plugins.libgen_store.store")
-        cfg = importlib.import_module("calibre_plugins.libgen_store.config")
-        print("✓ Modules imported successfully.")
+        ui_mod = importlib.import_module("calibre_plugins.libgen_store.ui")
+        dialog_mod = importlib.import_module("calibre_plugins.libgen_store.dialog")
+        scraper_mod = importlib.import_module("calibre_plugins.libgen_store.scraper")
+        cfg_mod = importlib.import_module("calibre_plugins.libgen_store.config")
+        print("✓ All plugin modules imported successfully:")
+        print(f"    - InterfaceAction: {ui_mod.LibgenAction.name}")
+        print(f"    - Dialog: {dialog_mod.LibgenDialog}")
+        print(f"    - Scraper: {scraper_mod.LibgenScraper}")
     except Exception as e:
         print(f"✗ Failed to import plugin module: {e}")
         return 1
 
-    print(f"Current preferences: Language={cfg.prefs.get('preferred_language')}, Format={cfg.prefs.get('preferred_format')}, FilterMode={cfg.prefs.get('filter_mode')}")
+    print("\nTesting LibGen search with live mirror queries...")
+    scraper = scraper_mod.LibgenScraper(timeout=20)
+    books = scraper.search("Foundation Asimov", max_results=3, preferred_format="EPUB", filter_mode="Prioritize")
+    print(f"✓ Search returned {len(books)} books:")
+    for i, b in enumerate(books, 1):
+        print(f"  [{i}] {b.title[:40]} | Author: {b.author[:25]} | [{b.extension}] | {b.size}")
 
-    print("\nExecuting search for 'Dune Frank Herbert' (max_results=3)...")
-    store = m.LibgenStore(None, "LibGen")
-    results = list(store.search("Dune Frank Herbert", max_results=3, timeout=30))
-    print(f"✓ Search returned {len(results)} items:")
+    if books:
+        top_book = books[0]
+        print(f"\nTesting direct download resolution for '{top_book.title[:30]}':")
+        dl_url, cover = scraper.resolve_details(top_book.detail_url, timeout=15)
+        print(f"    Download URL: {dl_url[:60] if dl_url else 'None'}...")
+        print(f"    Cover URL:    {cover or 'None'}")
+        assert dl_url is not None, "Failed to resolve download URL"
+        print("✓ Detail and download resolution passed!")
 
-    for i, r in enumerate(results[:2], 1):
-        print(f"\n[{i}] {r.title[:45]}")
-        print(f"    Author:   {r.author[:30]}")
-        print(f"    Format:   {r.formats}")
-        print(f"    Price:    {r.price}")
-        print(f"    Detail:   {r.detail_item}")
-
-        # Test resolving download and cover details
-        print("    Fetching download details...")
-        modified = store.get_details(r, timeout=15)
-        dl = r.downloads.get(r.formats, "None")
-        print(f"    Modified: {modified}")
-        print(f"    Download: {dl[:60]}...")
-        print(f"    Cover:    {r.cover_url or 'None'}")
-
+    print("\n✓ All tests completed successfully!")
     return 0
 
 

@@ -1,5 +1,5 @@
-PLUGIN_NAME = libgen_store.zip
-SOURCES = __init__.py store.py scraper.py config.py plugin-import-name-libgen_store.txt
+PLUGIN_NAME = libgen_downloader.zip
+SOURCES = __init__.py ui.py dialog.py scraper.py config.py plugin-import-name-libgen_store.txt images/icon.png
 
 .PHONY: all build install uninstall test clean
 
@@ -10,7 +10,7 @@ build: $(PLUGIN_NAME)
 $(PLUGIN_NAME): $(SOURCES)
 	@echo "Packaging $(PLUGIN_NAME)..."
 	@rm -f $(PLUGIN_NAME)
-	@zip -q $(PLUGIN_NAME) $(SOURCES)
+	@zip -q -r $(PLUGIN_NAME) $(SOURCES)
 	@echo "Successfully created $(PLUGIN_NAME)"
 
 install: build
@@ -19,13 +19,14 @@ install: build
 	@echo "Plugin installed successfully. Restart Calibre to take effect."
 
 uninstall:
-	@echo "Removing LibGen plugin from Calibre..."
+	@echo "Removing LibGen Downloader plugin from Calibre..."
+	calibre-customize -r "LibGen Downloader" || true
 	calibre-customize -r "LibGen" || true
 
 test: install
-	@echo "Testing LibGen store search in Calibre..."
+	@echo "Testing LibGen plugin modules and UI instantiation..."
 	calibre-debug test_plugin.py
 
 clean:
-	rm -f $(PLUGIN_NAME) *.pyc
+	rm -f $(PLUGIN_NAME) *.pyc libgen_store.zip
 	rm -rf __pycache__
