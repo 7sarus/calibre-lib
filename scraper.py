@@ -55,6 +55,8 @@ class LibgenScraper:
     def search(
         self,
         query,
+        search_field="",
+        selected_mirror=None,
         max_results=25,
         preferred_language="Any",
         preferred_format="Any",
@@ -62,20 +64,27 @@ class LibgenScraper:
     ):
         """
         Search LibGen mirrors for books matching the query.
-        Applies language and format locking/filtering as configured.
+        Supports field targeting and mirror selection with auto-failover.
         """
         b = self._get_browser()
         books = []
         last_error = None
 
         encoded_query = quote_plus(query.strip())
+        field_param = f"&columns%5B%5D={search_field}" if search_field else ""
 
-        for mirror in self.mirrors:
+        # Determine mirror order: selected mirror first (if valid), followed by remaining mirrors
+        mirror_order = list(self.mirrors)
+        if selected_mirror and selected_mirror != "Auto":
+            clean_selected = selected_mirror.strip().rstrip("/")
+            mirror_order = [clean_selected] + [m for m in mirror_order if m.rstrip("/") != clean_selected]
+
+        for mirror in mirror_order:
             mirror = mirror.strip().rstrip("/")
             if not mirror:
                 continue
 
-            search_url = f"{mirror}/index.php?req={encoded_query}&res={max_results * 2}"
+            search_url = f"{mirror}/index.php?req={encoded_query}{field_param}&res={max_results * 2}"
             try:
                 resp = b.open(search_url, timeout=self.timeout)
                 html = resp.read()
@@ -255,4 +264,26 @@ class LibgenScraper:
                     progress_callback(bytes_read, total_bytes)
 
         return destination_path
+
+    def ping_mirror(self, mirror_url, timeout=5):
+        """
+        Tests a mirror URL and returns (is_ok: bool, latency_ms: int, status_str: str).
+        """
+        import time
+        t0 = time.time()
+        b = self._get_browser()
+        try:
+            url = mirror_url.strip().rstrip("/")
+            resp = b.open(url, timeout=timeout)
+            code = getattr(resp, "code", 200)
+            latency = int((time.time() - t0) * 1000)
+            if code and code >= 400:
+                return False, latency, f"HTTP {code}"
+            return True, latency, f"{latency} ms"
+        except Exception as e:
+            latency = int((time.time() - t0) * 1000)
+            err = str(e)
+            if "timed out" in err.lower():
+                return False, latency, "Timed out"
+            return False, latency, f"Error: {err[:35]}"
 

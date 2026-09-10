@@ -14,6 +14,12 @@ Search books directly across Library Genesis mirrors, lock or filter by language
 ## ✨ Features
 
 - **Dedicated Toolbar Button & UI**: Adds a **LibGen** action button directly to Calibre's toolbar (`Ctrl+Shift+L` shortcut).
+- **Field-Targeted Search**: Search specifically by **All Fields**, **Title**, **Author**, **Series**, **Publisher**, **Year**, or **ISBN**.
+- **Mirror Selection & Health Testing**:
+  - Choose a specific mirror or leave on **Auto (Failover)**.
+  - Dedicated **Mirrors & Health** tab: test all mirrors to check response latency (`ms`) and errors.
+  - Set preferred mirrors as Primary.
+- **Custom Mirrors**: Add and persist your own custom LibGen mirror URLs directly from the UI.
 - **Bulk Download Queue**:
   - Search books and select multiple titles using checkboxes.
   - Add selections to the **Bulk Queue** tab.
@@ -26,7 +32,6 @@ Search books directly across Library Genesis mirrors, lock or filter by language
   - Configurable filter modes:
     - **Prioritize**: Surfaces preferred language/format books at the top.
     - **Strict**: Only returns books matching the chosen criteria.
-- **Multi-Mirror Failover**: Automatically cycles through active LibGen mirrors (`libgen.li`, `libgen.vg`, `libgen.gl`, `libgen.bz`, `libgen.is`).
 - **Zero External Dependencies**: Uses Calibre's bundled Python 3, Qt bindings (`qt.core`), and BeautifulSoup (`bs4`).
 
 ---

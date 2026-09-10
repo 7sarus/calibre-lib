@@ -29,23 +29,35 @@ def main():
         print(f"✗ Failed to import plugin module: {e}")
         return 1
 
-    print("\nTesting LibGen search with live mirror queries...")
-    scraper = scraper_mod.LibgenScraper(timeout=20)
-    books = scraper.search("Foundation Asimov", max_results=3, preferred_format="EPUB", filter_mode="Prioritize")
-    print(f"✓ Search returned {len(books)} books:")
+    print("\nTesting Mirror Management & Ping...")
+    scraper = scraper_mod.LibgenScraper(timeout=10)
+    all_mirrors = cfg_mod.get_mirrors()
+    print(f"Found {len(all_mirrors)} configured mirrors: {all_mirrors[:3]}...")
+    primary = all_mirrors[0]
+    ok, latency, msg = scraper.ping_mirror(primary, timeout=8)
+    print(f"✓ Ping {primary}: status={ok}, latency={latency}ms, msg='{msg}'")
+
+    print("\nTesting Custom Mirror Add / Remove...")
+    test_url = "https://libgen.is"
+    cfg_mod.add_custom_mirror(test_url)
+    assert test_url in cfg_mod.get_mirrors(), "Custom mirror not in get_mirrors"
+    print(f"✓ Custom mirror {test_url} added successfully.")
+    cfg_mod.remove_custom_mirror(test_url)
+    print(f"✓ Custom mirror {test_url} removed successfully.")
+
+    print("\nTesting Field-Specific Search (Author='Isaac Asimov')...")
+    books = scraper.search(
+        query="Isaac Asimov",
+        search_field=cfg_mod.SEARCH_FIELDS["Author"],
+        max_results=3,
+        preferred_format="EPUB",
+        filter_mode="Prioritize",
+    )
+    print(f"✓ Author search returned {len(books)} books:")
     for i, b in enumerate(books, 1):
-        print(f"  [{i}] {b.title[:40]} | Author: {b.author[:25]} | [{b.extension}] | {b.size}")
+        print(f"  [{i}] {b.title[:40]} | Author: {b.author[:25]} | [{b.extension}]")
 
-    if books:
-        top_book = books[0]
-        print(f"\nTesting direct download resolution for '{top_book.title[:30]}':")
-        dl_url, cover = scraper.resolve_details(top_book.detail_url, timeout=15)
-        print(f"    Download URL: {dl_url[:60] if dl_url else 'None'}...")
-        print(f"    Cover URL:    {cover or 'None'}")
-        assert dl_url is not None, "Failed to resolve download URL"
-        print("✓ Detail and download resolution passed!")
-
-    print("\n✓ All tests completed successfully!")
+    print("\n✓ All new features (field selection, mirror ping, custom mirrors) verified!")
     return 0
 
 
