@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-Dedicated UI dialog for LibGen Downloader with search, filters,
-and bulk queue download manager directly inside Calibre.
+Dedicated UI dialog for LibGen Downloader with search, field selection,
+mirror selection/health checks, and bulk queue download manager directly inside Calibre.
 """
 
 import os
@@ -28,9 +28,20 @@ from qt.core import (
     QThread,
     pyqtSignal,
     QWidget,
+    QColor,
+    QGroupBox,
 )
 
-from calibre_plugins.libgen_store.config import prefs, SUPPORTED_LANGUAGES, SUPPORTED_FORMATS, FILTER_MODES
+from calibre_plugins.libgen_store.config import (
+    prefs,
+    SUPPORTED_LANGUAGES,
+    SUPPORTED_FORMATS,
+    FILTER_MODES,
+    SEARCH_FIELDS,
+    get_mirrors,
+    add_custom_mirror,
+    remove_custom_mirror,
+)
 from calibre_plugins.libgen_store.scraper import LibgenScraper
 
 
@@ -43,24 +54,25 @@ class SearchWorker(QThread):
     finished_signal = pyqtSignal(list)
     error_signal = pyqtSignal(str)
 
-    def __init__(self, query, language, fmt, filter_mode, parent=None):
+    def __init__(self, query, search_field, selected_mirror, language, fmt, filter_mode, parent=None):
         super().__init__(parent)
         self.query = query
+        self.search_field = search_field
+        self.selected_mirror = selected_mirror
         self.language = language
         self.fmt = fmt
         self.filter_mode = filter_mode
 
     def run(self):
         try:
-            primary = prefs.get("primary_mirror", "https://libgen.li").strip()
-            fallback_str = prefs.get("fallback_mirrors", "")
-            fallbacks = [m.strip() for m in fallback_str.split(",") if m.strip()]
-            mirrors = [primary] + [m for m in fallbacks if m != primary]
+            mirrors = get_mirrors()
             timeout = int(prefs.get("timeout", 20))
 
             scraper = LibgenScraper(mirrors=mirrors, timeout=timeout)
             books = scraper.search(
                 query=self.query,
+                search_field=self.search_field,
+                selected_mirror=self.selected_mirror,
                 max_results=int(prefs.get("max_results", 50)),
                 preferred_language=self.language,
                 preferred_format=self.fmt,
@@ -69,6 +81,22 @@ class SearchWorker(QThread):
             self.finished_signal.emit(books)
         except Exception as e:
             self.error_signal.emit(str(e))
+
+
+class MirrorHealthWorker(QThread):
+    mirror_tested = pyqtSignal(str, bool, int, str)  # url, is_ok, latency_ms, status_msg
+    all_tested = pyqtSignal()
+
+    def __init__(self, mirrors, parent=None):
+        super().__init__(parent)
+        self.mirrors = mirrors
+
+    def run(self):
+        scraper = LibgenScraper(timeout=8)
+        for mirror in self.mirrors:
+            is_ok, ms, msg = scraper.ping_mirror(mirror, timeout=8)
+            self.mirror_tested.emit(mirror, is_ok, ms, msg)
+        self.all_tested.emit()
 
 
 class BulkDownloadWorker(QThread):
@@ -86,10 +114,7 @@ class BulkDownloadWorker(QThread):
         self._is_aborted = True
 
     def run(self):
-        primary = prefs.get("primary_mirror", "https://libgen.li").strip()
-        fallback_str = prefs.get("fallback_mirrors", "")
-        fallbacks = [m.strip() for m in fallback_str.split(",") if m.strip()]
-        mirrors = [primary] + [m for m in fallbacks if m != primary]
+        mirrors = get_mirrors()
         timeout = int(prefs.get("timeout", 20))
         scraper = LibgenScraper(mirrors=mirrors, timeout=timeout)
 
@@ -142,28 +167,42 @@ class LibgenDialog(QDialog):
         super().__init__(parent or gui)
         self.gui = gui
         self.setWindowTitle("LibGen Downloader")
-        self.resize(960, 600)
+        self.resize(1020, 620)
 
         self.search_results = []
         self.queue_items = []
+        self.mirror_health = {}
         self.download_worker = None
         self.search_worker = None
+        self.health_worker = None
 
         self._setup_ui()
+        self.populate_mirrors_table()
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
 
-        # Top Bar: Search Query & Quick Filters
+        # Top Bar: Search Query, Field, Language, Format, and Mirror Selectors
         top_bar = QHBoxLayout()
 
         top_bar.addWidget(QLabel("Search:"))
         self.search_input = QLineEdit(self)
-        self.search_input.setPlaceholderText("Book title, author, series, or ISBN...")
+        self.search_input.setPlaceholderText("Title, author, series, ISBN...")
         self.search_input.returnPressed.connect(self.start_search)
         top_bar.addWidget(self.search_input, stretch=3)
 
-        top_bar.addWidget(QLabel("Language:"))
+        # Search Field Selector
+        top_bar.addWidget(QLabel("Field:"))
+        self.field_combo = QComboBox(self)
+        self.field_combo.addItems(list(SEARCH_FIELDS.keys()))
+        cur_field = prefs.get("search_field", "All Fields")
+        f_idx = self.field_combo.findText(cur_field)
+        if f_idx >= 0:
+            self.field_combo.setCurrentIndex(f_idx)
+        top_bar.addWidget(self.field_combo)
+
+        # Language Selector
+        top_bar.addWidget(QLabel("Lang:"))
         self.lang_combo = QComboBox(self)
         self.lang_combo.addItems(SUPPORTED_LANGUAGES)
         cur_lang = prefs.get("preferred_language", "English")
@@ -172,16 +211,23 @@ class LibgenDialog(QDialog):
             self.lang_combo.setCurrentIndex(l_idx)
         top_bar.addWidget(self.lang_combo)
 
+        # Format Selector
         top_bar.addWidget(QLabel("Format:"))
         self.format_combo = QComboBox(self)
         self.format_combo.addItems(SUPPORTED_FORMATS)
         cur_fmt = prefs.get("preferred_format", "Any").upper()
-        f_idx = self.format_combo.findText(cur_fmt)
-        if f_idx >= 0:
-            self.format_combo.setCurrentIndex(f_idx)
+        fmt_idx = self.format_combo.findText(cur_fmt)
+        if fmt_idx >= 0:
+            self.format_combo.setCurrentIndex(fmt_idx)
         top_bar.addWidget(self.format_combo)
 
-        top_bar.addWidget(QLabel("Filter:"))
+        # Mirror Selector
+        top_bar.addWidget(QLabel("Mirror:"))
+        self.mirror_combo = QComboBox(self)
+        self.update_mirror_combobox()
+        top_bar.addWidget(self.mirror_combo)
+
+        # Filter Mode (Strict vs Prioritize)
         self.filter_combo = QComboBox(self)
         self.filter_combo.addItems(FILTER_MODES)
         cur_mode = prefs.get("filter_mode", "Prioritize")
@@ -191,12 +237,13 @@ class LibgenDialog(QDialog):
         top_bar.addWidget(self.filter_combo)
 
         self.search_btn = QPushButton("Search", self)
+        self.search_btn.setStyleSheet("font-weight: bold; background-color: #2b5b84; color: white; padding: 5px 12px;")
         self.search_btn.clicked.connect(self.start_search)
         top_bar.addWidget(self.search_btn)
 
         main_layout.addLayout(top_bar)
 
-        # Tabs: Search Results & Bulk Queue
+        # Tabs: Search Results, Bulk Queue, and Mirrors/Health
         self.tabs = QTabWidget(self)
 
         # --- Tab 1: Search Results ---
@@ -273,6 +320,49 @@ class LibgenDialog(QDialog):
         queue_layout.addLayout(queue_btn_bar)
         self.tabs.addTab(tab_queue, "Bulk Queue (0)")
 
+        # --- Tab 3: Mirrors & Health ---
+        tab_mirrors = QWidget()
+        mirrors_layout = QVBoxLayout(tab_mirrors)
+
+        # Mirrors Table
+        self.mirrors_table = QTableWidget(self)
+        self.mirrors_table.setColumnCount(5)
+        self.mirrors_table.setHorizontalHeaderLabels([
+            "Mirror URL", "Status", "Response Rate / Latency", "Type", "Action"
+        ])
+        self.mirrors_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.mirrors_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.mirrors_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        mirrors_layout.addWidget(self.mirrors_table)
+
+        # Mirror Controls
+        mirror_actions_bar = QHBoxLayout()
+        self.test_all_mirrors_btn = QPushButton("Ping / Test All Mirrors", self)
+        self.test_all_mirrors_btn.clicked.connect(self.test_all_mirrors)
+        mirror_actions_bar.addWidget(self.test_all_mirrors_btn)
+
+        self.set_primary_btn = QPushButton("Set Selected as Primary", self)
+        self.set_primary_btn.clicked.connect(self.set_selected_mirror_primary)
+        mirror_actions_bar.addWidget(self.set_primary_btn)
+
+        mirror_actions_bar.addStretch()
+        mirrors_layout.addLayout(mirror_actions_bar)
+
+        # Add Custom Mirror Box
+        add_group = QGroupBox("Add Custom Mirror")
+        add_layout = QHBoxLayout(add_group)
+        self.add_mirror_input = QLineEdit(self)
+        self.add_mirror_input.setPlaceholderText("https://libgen.is or custom mirror URL...")
+        self.add_mirror_input.returnPressed.connect(self.add_custom_mirror_handler)
+        add_layout.addWidget(self.add_mirror_input, stretch=3)
+
+        self.add_mirror_btn = QPushButton("Add Mirror", self)
+        self.add_mirror_btn.clicked.connect(self.add_custom_mirror_handler)
+        add_layout.addWidget(self.add_mirror_btn)
+
+        mirrors_layout.addWidget(add_group)
+        self.tabs.addTab(tab_mirrors, "Mirrors & Health")
+
         main_layout.addWidget(self.tabs)
 
         # Bottom Progress & Status Bar
@@ -289,6 +379,17 @@ class LibgenDialog(QDialog):
 
         main_layout.addLayout(status_bar)
 
+    def update_mirror_combobox(self):
+        self.mirror_combo.clear()
+        self.mirror_combo.addItem("Auto (Failover)")
+        for m in get_mirrors():
+            self.mirror_combo.addItem(m)
+
+        cur_selected = prefs.get("selected_mirror", "Auto")
+        idx = self.mirror_combo.findText(cur_selected)
+        if idx >= 0:
+            self.mirror_combo.setCurrentIndex(idx)
+
     # --- Search Handlers ---
     def start_search(self):
         query = self.search_input.text().strip()
@@ -300,12 +401,22 @@ class LibgenDialog(QDialog):
         self.progress_bar.setRange(0, 0)  # Indeterminate spinner
 
         # Update saved preferences
+        field_text = self.field_combo.currentText().strip()
+        field_code = SEARCH_FIELDS.get(field_text, "")
+        selected_mirror = self.mirror_combo.currentText().strip()
+        if selected_mirror.startswith("Auto"):
+            selected_mirror = "Auto"
+
+        prefs["search_field"] = field_text
+        prefs["selected_mirror"] = selected_mirror
         prefs["preferred_language"] = self.lang_combo.currentText().strip()
         prefs["preferred_format"] = self.format_combo.currentText().strip()
         prefs["filter_mode"] = self.filter_combo.currentText().strip()
 
         self.search_worker = SearchWorker(
             query=query,
+            search_field=field_code,
+            selected_mirror=selected_mirror,
             language=self.lang_combo.currentText().strip(),
             fmt=self.format_combo.currentText().strip(),
             filter_mode=self.filter_combo.currentText().strip(),
@@ -322,6 +433,7 @@ class LibgenDialog(QDialog):
         self.progress_bar.setValue(0)
         self.status_label.setText(f"Found {len(books)} books.")
         self.tabs.setTabText(0, f"Search Results ({len(books)})")
+        self.tabs.setCurrentIndex(0)
         self.populate_results_table()
 
     def on_search_error(self, err_msg):
@@ -382,13 +494,11 @@ class LibgenDialog(QDialog):
         if added_count > 0:
             self.update_queue_table()
             self.status_label.setText(f"Added {added_count} book(s) to download queue.")
-            # Switch to Queue tab so user sees their queue
             self.tabs.setCurrentIndex(1)
         else:
             QMessageBox.information(self, "No Items Selected", "Please check at least one book to add to queue.")
 
     def download_selected_now(self):
-        """Immediately queues selected books and starts downloading."""
         self.queue_selected_results()
         self.start_bulk_download()
 
@@ -414,6 +524,108 @@ class LibgenDialog(QDialog):
     def clear_queue(self):
         self.queue_items.clear()
         self.update_queue_table()
+
+    # --- Mirrors & Health Handlers ---
+    def populate_mirrors_table(self):
+        mirrors = get_mirrors()
+        primary = prefs.get("primary_mirror", "https://libgen.li").strip().rstrip("/")
+        custom = [m.rstrip("/") for m in prefs.get("custom_mirrors", [])]
+
+        self.mirrors_table.setRowCount(0)
+        for row, m in enumerate(mirrors):
+            self.mirrors_table.insertRow(row)
+
+            # URL
+            self.mirrors_table.setItem(row, 0, QTableWidgetItem(m))
+
+            # Health Info
+            health = self.mirror_health.get(m)
+            if health:
+                is_ok, ms, msg = health
+                status_item = QTableWidgetItem("Online" if is_ok else "Error")
+                status_item.setForeground(QColor("green") if is_ok else QColor("red"))
+                rate_item = QTableWidgetItem(msg)
+            else:
+                status_item = QTableWidgetItem("Untested")
+                status_item.setForeground(QColor("gray"))
+                rate_item = QTableWidgetItem("-")
+
+            self.mirrors_table.setItem(row, 1, status_item)
+            self.mirrors_table.setItem(row, 2, rate_item)
+
+            # Type
+            m_type = "Primary" if m == primary else ("Custom" if m in custom else "Fallback")
+            type_item = QTableWidgetItem(m_type)
+            self.mirrors_table.setItem(row, 3, type_item)
+
+            # Action
+            if m in custom:
+                del_btn = QPushButton("Remove")
+                del_btn.clicked.connect(lambda checked, url=m: self.remove_mirror_handler(url))
+                self.mirrors_table.setCellWidget(row, 4, del_btn)
+            else:
+                self.mirrors_table.setItem(row, 4, QTableWidgetItem("-"))
+
+    def test_all_mirrors(self):
+        mirrors = get_mirrors()
+        self.test_all_mirrors_btn.setEnabled(False)
+        self.status_label.setText("Pinging all LibGen mirrors...")
+        self.progress_bar.setRange(0, len(mirrors))
+        self.progress_bar.setValue(0)
+
+        self.health_worker = MirrorHealthWorker(mirrors, parent=self)
+        self.health_worker.mirror_tested.connect(self.on_mirror_tested)
+        self.health_worker.all_tested.connect(self.on_all_mirrors_tested)
+        self.health_worker.start()
+
+    def on_mirror_tested(self, url, is_ok, ms, msg):
+        self.mirror_health[url] = (is_ok, ms, msg)
+        self.progress_bar.setValue(self.progress_bar.value() + 1)
+        self.populate_mirrors_table()
+
+    def on_all_mirrors_tested(self):
+        self.test_all_mirrors_btn.setEnabled(True)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(100)
+        self.status_label.setText("Mirror health testing completed.")
+
+    def set_selected_mirror_primary(self):
+        selected_rows = list(set(idx.row() for idx in self.mirrors_table.selectedIndexes()))
+        if not selected_rows:
+            QMessageBox.information(self, "Selection Required", "Please select a mirror in the table to set as primary.")
+            return
+
+        row = selected_rows[0]
+        url = self.mirrors_table.item(row, 0).text().strip()
+        prefs["primary_mirror"] = url
+        self.populate_mirrors_table()
+        self.update_mirror_combobox()
+        self.status_label.setText(f"Primary mirror updated to {url}.")
+
+    def add_custom_mirror_handler(self):
+        url = self.add_mirror_input.text().strip()
+        if not url:
+            return
+
+        added_url = add_custom_mirror(url)
+        self.add_mirror_input.clear()
+        self.populate_mirrors_table()
+        self.update_mirror_combobox()
+        self.status_label.setText(f"Added custom mirror: {added_url}")
+
+        # Test new mirror immediately in background
+        scraper = LibgenScraper(timeout=8)
+        is_ok, ms, msg = scraper.ping_mirror(added_url, timeout=8)
+        self.mirror_health[added_url] = (is_ok, ms, msg)
+        self.populate_mirrors_table()
+
+    def remove_mirror_handler(self, url):
+        remove_custom_mirror(url)
+        if url in self.mirror_health:
+            del self.mirror_health[url]
+        self.populate_mirrors_table()
+        self.update_mirror_combobox()
+        self.status_label.setText(f"Removed mirror: {url}")
 
     # --- Bulk Download Handlers ---
     def start_bulk_download(self):
@@ -458,7 +670,6 @@ class LibgenDialog(QDialog):
                 elif hasattr(add_action, "add_books"):
                     add_action.add_books([file_path])
             else:
-                # Fallback directly to library database
                 from calibre.gui2.add import Adder
                 Adder([file_path], db=self.gui.current_db, parent=self.gui)
         except Exception as e:
@@ -487,4 +698,3 @@ class LibgenDialog(QDialog):
                 event.ignore()
                 return
         event.accept()
-

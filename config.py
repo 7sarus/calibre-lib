@@ -27,9 +27,47 @@ prefs.defaults["fallback_mirrors"] = (
 )
 prefs.defaults["preferred_language"] = "English"
 prefs.defaults["preferred_format"] = "Any"
-prefs.defaults["filter_mode"] = "Prioritize"
-prefs.defaults["max_results"] = 25
-prefs.defaults["timeout"] = 20
+prefs.defaults["custom_mirrors"] = []
+prefs.defaults["selected_mirror"] = "Auto"
+prefs.defaults["search_field"] = "All Fields"
+
+SEARCH_FIELDS = {
+    "All Fields": "",
+    "Title": "t",
+    "Author": "a",
+    "Series": "s",
+    "Publisher": "p",
+    "Year": "y",
+    "ISBN": "i",
+}
+
+def get_mirrors():
+    """Returns an ordered list of unique mirrors: primary, fallbacks, and user-added custom mirrors."""
+    primary = prefs.get("primary_mirror", "https://libgen.li").strip().rstrip("/")
+    fallback_str = prefs.get("fallback_mirrors", "")
+    fallbacks = [m.strip().rstrip("/") for m in fallback_str.split(",") if m.strip()]
+    custom = [m.strip().rstrip("/") for m in prefs.get("custom_mirrors", []) if m.strip()]
+
+    mirrors = []
+    for m in [primary] + fallbacks + custom:
+        if m and m not in mirrors:
+            mirrors.append(m)
+    return mirrors
+
+def add_custom_mirror(url):
+    url = url.strip().rstrip("/")
+    if not url.startswith("http://") and not url.startswith("https://"):
+        url = "https://" + url
+    custom = list(prefs.get("custom_mirrors", []))
+    if url not in custom:
+        custom.append(url)
+        prefs["custom_mirrors"] = custom
+    return url
+
+def remove_custom_mirror(url):
+    url = url.strip().rstrip("/")
+    custom = [m for m in prefs.get("custom_mirrors", []) if m.rstrip("/") != url]
+    prefs["custom_mirrors"] = custom
 
 SUPPORTED_LANGUAGES = [
     "Any",
