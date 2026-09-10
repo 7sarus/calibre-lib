@@ -15,11 +15,12 @@ Search books directly across Library Genesis mirrors, lock or filter by language
 
 - **Dedicated Toolbar Button & UI**: Adds a **LibGen** action button directly to Calibre's toolbar (`Ctrl+Shift+L` shortcut).
 - **Field-Targeted Search**: Search specifically by **All Fields**, **Title**, **Author**, **Series**, **Publisher**, **Year**, or **ISBN**.
-- **Mirror Selection & Health Testing**:
+- **Mirror Latency & Bandwidth Benchmarking**:
   - Choose a specific mirror or leave on **Auto (Failover)**.
-  - Dedicated **Mirrors & Health** tab: test all mirrors to check response latency (`ms`) and errors.
-  - Set preferred mirrors as Primary.
-- **Custom Mirrors**: Add and persist your own custom LibGen mirror URLs directly from the UI.
+  - Dedicated **Mirrors & Health** tab: tests connection latency (TTFB `ms`) and live download bandwidth (`KB/s` / `MB/s`).
+  - **Sort by Speed**: One-click sorting that reorders mirrors by bandwidth/latency and saves the fastest mirror as primary.
+  - Set preferred mirrors as Primary manually or automatically.
+- **Custom Mirrors**: Add, test, and persist your own custom LibGen mirror URLs directly from the UI.
 - **Bulk Download Queue**:
   - Search books and select multiple titles using checkboxes.
   - Add selections to the **Bulk Queue** tab.
@@ -114,8 +115,19 @@ Configure:
 - **AI / LLM Assisted**: This rewrite was developed with the assistance of an LLM pair programmer.
 - **For Fun**: This is strictly a "just for fun" experimental hobby project created for personal exploration and enjoyment.
 
+## 📦 Releases
+
+- **[v0.2.0 "Batarang"](https://github.com/7sarus/calibre-lib/releases/tag/v0.2.0)**:
+  - Live mirror bandwidth benchmarking (throughput alongside latency).
+  - One-click "Sort by Speed" button with automatic primary mirror reordering.
+  - Search field targeting (`Title`, `Author`, `Series`, `Publisher`, `Year`, `ISBN`).
+  - Dedicated "Mirrors & Health" table with separate latency and speed columns.
+  - Custom mirror add/remove with persistence.
+- **[v0.1.0-alpha](https://github.com/7sarus/calibre-lib/releases/tag/v0.1.0-alpha)**: Initial Calibre plugin port with bulk queue and library ingestion.
+
 ---
 
 ## 📜 License
 
 [WTFPL](LICENSE)
+

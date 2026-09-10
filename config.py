@@ -69,6 +69,18 @@ def remove_custom_mirror(url):
     custom = [m for m in prefs.get("custom_mirrors", []) if m.rstrip("/") != url]
     prefs["custom_mirrors"] = custom
 
+def set_mirror_order(sorted_mirrors):
+    """Updates mirror order in prefs, setting fastest as primary and others as fallbacks."""
+    if not sorted_mirrors:
+        return
+    primary = sorted_mirrors[0].strip().rstrip("/")
+    prefs["primary_mirror"] = primary
+
+    custom_set = set(m.rstrip("/") for m in prefs.get("custom_mirrors", []))
+    remaining = [m.rstrip("/") for m in sorted_mirrors[1:] if m.rstrip("/") not in custom_set]
+    prefs["fallback_mirrors"] = ", ".join(remaining)
+
+
 SUPPORTED_LANGUAGES = [
     "Any",
     "English",
