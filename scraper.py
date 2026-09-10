@@ -265,25 +265,62 @@ class LibgenScraper:
 
         return destination_path
 
-    def ping_mirror(self, mirror_url, timeout=5):
+    def ping_mirror(self, mirror_url, timeout=8):
         """
-        Tests a mirror URL and returns (is_ok: bool, latency_ms: int, status_str: str).
+        Tests a mirror URL and measures both latency and bandwidth by downloading a small payload.
+        Returns:
+            (is_ok: bool, latency_ms: int, bandwidth_kb_s: float, speed_str: str, status_msg: str)
         """
         import time
         t0 = time.time()
         b = self._get_browser()
         try:
             url = mirror_url.strip().rstrip("/")
+            # 1. Initial connection / TTFB latency
             resp = b.open(url, timeout=timeout)
+            t_connected = time.time()
+            latency = int((t_connected - t0) * 1000)
+
             code = getattr(resp, "code", 200)
-            latency = int((time.time() - t0) * 1000)
             if code and code >= 400:
-                return False, latency, f"HTTP {code}"
-            return True, latency, f"{latency} ms"
+                return False, latency, 0.0, "0 KB/s", f"HTTP {code}"
+
+            # 2. Download transfer rate (bandwidth test on small payload)
+            t_dl_start = time.time()
+            data = resp.read()
+            dl_time = max(time.time() - t_dl_start, 0.005)
+            bytes_read = len(data)
+
+            # If root response was empty or too small, test against a static asset
+            if bytes_read < 1024:
+                for test_asset in ["/favicon.ico", "/index.php", "/img/blank.png"]:
+                    try:
+                        asset_url = urljoin(url + "/", test_asset.lstrip("/"))
+                        t_sub = time.time()
+                        sub_resp = b.open(asset_url, timeout=timeout)
+                        sub_data = sub_resp.read()
+                        sub_time = max(time.time() - t_sub, 0.005)
+                        if len(sub_data) > bytes_read:
+                            bytes_read = len(sub_data)
+                            dl_time = sub_time
+                            break
+                    except Exception:
+                        continue
+
+            if bytes_read > 0 and dl_time > 0:
+                speed_kb_s = (bytes_read / 1024.0) / dl_time
+                if speed_kb_s >= 1024.0:
+                    speed_str = f"{speed_kb_s / 1024.0:.1f} MB/s"
+                else:
+                    speed_str = f"{speed_kb_s:.0f} KB/s"
+            else:
+                speed_kb_s = 0.0
+                speed_str = "< 10 KB/s"
+
+            return True, latency, speed_kb_s, speed_str, "Online"
         except Exception as e:
             latency = int((time.time() - t0) * 1000)
             err = str(e)
-            if "timed out" in err.lower():
-                return False, latency, "Timed out"
-            return False, latency, f"Error: {err[:35]}"
+            status_msg = "Timed out" if "timed out" in err.lower() else f"Error: {err[:30]}"
+            return False, latency, 0.0, "0 KB/s", status_msg
 

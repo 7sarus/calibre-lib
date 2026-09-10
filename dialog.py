@@ -39,6 +39,7 @@ from calibre_plugins.libgen_store.config import (
     FILTER_MODES,
     SEARCH_FIELDS,
     get_mirrors,
+    set_mirror_order,
     add_custom_mirror,
     remove_custom_mirror,
 )
@@ -84,7 +85,7 @@ class SearchWorker(QThread):
 
 
 class MirrorHealthWorker(QThread):
-    mirror_tested = pyqtSignal(str, bool, int, str)  # url, is_ok, latency_ms, status_msg
+    mirror_tested = pyqtSignal(str, bool, int, float, str, str)  # url, is_ok, latency_ms, kb_s, speed_str, status_msg
     all_tested = pyqtSignal()
 
     def __init__(self, mirrors, parent=None):
@@ -94,8 +95,8 @@ class MirrorHealthWorker(QThread):
     def run(self):
         scraper = LibgenScraper(timeout=8)
         for mirror in self.mirrors:
-            is_ok, ms, msg = scraper.ping_mirror(mirror, timeout=8)
-            self.mirror_tested.emit(mirror, is_ok, ms, msg)
+            is_ok, ms, kb_s, speed_str, msg = scraper.ping_mirror(mirror, timeout=8)
+            self.mirror_tested.emit(mirror, is_ok, ms, kb_s, speed_str, msg)
         self.all_tested.emit()
 
 
@@ -326,12 +327,16 @@ class LibgenDialog(QDialog):
 
         # Mirrors Table
         self.mirrors_table = QTableWidget(self)
-        self.mirrors_table.setColumnCount(5)
+        self.mirrors_table.setColumnCount(6)
         self.mirrors_table.setHorizontalHeaderLabels([
-            "Mirror URL", "Status", "Response Rate / Latency", "Type", "Action"
+            "Mirror URL", "Status", "Latency", "Speed", "Type", "Action"
         ])
         self.mirrors_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.mirrors_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.mirrors_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.mirrors_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.mirrors_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.mirrors_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         self.mirrors_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         mirrors_layout.addWidget(self.mirrors_table)
 
@@ -340,6 +345,11 @@ class LibgenDialog(QDialog):
         self.test_all_mirrors_btn = QPushButton("Ping / Test All Mirrors", self)
         self.test_all_mirrors_btn.clicked.connect(self.test_all_mirrors)
         mirror_actions_bar.addWidget(self.test_all_mirrors_btn)
+
+        self.sort_speed_btn = QPushButton("Sort by Speed", self)
+        self.sort_speed_btn.setStyleSheet("font-weight: bold;")
+        self.sort_speed_btn.clicked.connect(self.sort_mirrors_by_speed)
+        mirror_actions_bar.addWidget(self.sort_speed_btn)
 
         self.set_primary_btn = QPushButton("Set Selected as Primary", self)
         self.set_primary_btn.clicked.connect(self.set_selected_mirror_primary)
@@ -538,38 +548,41 @@ class LibgenDialog(QDialog):
             # URL
             self.mirrors_table.setItem(row, 0, QTableWidgetItem(m))
 
-            # Health Info
+            # Health Info: (is_ok, ms, kb_s, speed_str, msg)
             health = self.mirror_health.get(m)
             if health:
-                is_ok, ms, msg = health
+                is_ok, ms, kb_s, speed_str, msg = health
                 status_item = QTableWidgetItem("Online" if is_ok else "Error")
                 status_item.setForeground(QColor("green") if is_ok else QColor("red"))
-                rate_item = QTableWidgetItem(msg)
+                latency_item = QTableWidgetItem(f"{ms} ms" if is_ok else "-")
+                speed_item = QTableWidgetItem(speed_str if is_ok else "-")
             else:
                 status_item = QTableWidgetItem("Untested")
                 status_item.setForeground(QColor("gray"))
-                rate_item = QTableWidgetItem("-")
+                latency_item = QTableWidgetItem("-")
+                speed_item = QTableWidgetItem("-")
 
             self.mirrors_table.setItem(row, 1, status_item)
-            self.mirrors_table.setItem(row, 2, rate_item)
+            self.mirrors_table.setItem(row, 2, latency_item)
+            self.mirrors_table.setItem(row, 3, speed_item)
 
             # Type
             m_type = "Primary" if m == primary else ("Custom" if m in custom else "Fallback")
             type_item = QTableWidgetItem(m_type)
-            self.mirrors_table.setItem(row, 3, type_item)
+            self.mirrors_table.setItem(row, 4, type_item)
 
             # Action
             if m in custom:
                 del_btn = QPushButton("Remove")
                 del_btn.clicked.connect(lambda checked, url=m: self.remove_mirror_handler(url))
-                self.mirrors_table.setCellWidget(row, 4, del_btn)
+                self.mirrors_table.setCellWidget(row, 5, del_btn)
             else:
-                self.mirrors_table.setItem(row, 4, QTableWidgetItem("-"))
+                self.mirrors_table.setItem(row, 5, QTableWidgetItem("-"))
 
     def test_all_mirrors(self):
         mirrors = get_mirrors()
         self.test_all_mirrors_btn.setEnabled(False)
-        self.status_label.setText("Pinging all LibGen mirrors...")
+        self.status_label.setText("Testing latency and download bandwidth for all LibGen mirrors...")
         self.progress_bar.setRange(0, len(mirrors))
         self.progress_bar.setValue(0)
 
@@ -578,8 +591,8 @@ class LibgenDialog(QDialog):
         self.health_worker.all_tested.connect(self.on_all_mirrors_tested)
         self.health_worker.start()
 
-    def on_mirror_tested(self, url, is_ok, ms, msg):
-        self.mirror_health[url] = (is_ok, ms, msg)
+    def on_mirror_tested(self, url, is_ok, ms, kb_s, speed_str, msg):
+        self.mirror_health[url] = (is_ok, ms, kb_s, speed_str, msg)
         self.progress_bar.setValue(self.progress_bar.value() + 1)
         self.populate_mirrors_table()
 
@@ -587,7 +600,36 @@ class LibgenDialog(QDialog):
         self.test_all_mirrors_btn.setEnabled(True)
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(100)
-        self.status_label.setText("Mirror health testing completed.")
+        self.status_label.setText("Mirror speed and latency testing completed.")
+
+    def sort_mirrors_by_speed(self):
+        """Sorts mirrors by highest bandwidth and lowest latency."""
+        mirrors = get_mirrors()
+        if not mirrors:
+            return
+
+        def speed_key(m):
+            health = self.mirror_health.get(m)
+            if not health:
+                return (-1.0, -999999)
+            is_ok, ms, kb_s, speed_str, msg = health
+            if not is_ok:
+                return (-1.0, -999999)
+            return (kb_s, -ms)
+
+        sorted_mirrors = sorted(mirrors, key=speed_key, reverse=True)
+        set_mirror_order(sorted_mirrors)
+        self.populate_mirrors_table()
+        self.update_mirror_combobox()
+
+        fastest = sorted_mirrors[0]
+        health = self.mirror_health.get(fastest)
+        if health and health[0]:
+            self.status_label.setText(
+                f"Sorted by speed! Fastest: {fastest} ({health[3]}, {health[1]} ms)"
+            )
+        else:
+            self.status_label.setText("Mirrors sorted by speed.")
 
     def set_selected_mirror_primary(self):
         selected_rows = list(set(idx.row() for idx in self.mirrors_table.selectedIndexes()))
@@ -615,8 +657,8 @@ class LibgenDialog(QDialog):
 
         # Test new mirror immediately in background
         scraper = LibgenScraper(timeout=8)
-        is_ok, ms, msg = scraper.ping_mirror(added_url, timeout=8)
-        self.mirror_health[added_url] = (is_ok, ms, msg)
+        is_ok, ms, kb_s, speed_str, msg = scraper.ping_mirror(added_url, timeout=8)
+        self.mirror_health[added_url] = (is_ok, ms, kb_s, speed_str, msg)
         self.populate_mirrors_table()
 
     def remove_mirror_handler(self, url):

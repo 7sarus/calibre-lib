@@ -29,19 +29,22 @@ def main():
         print(f"✗ Failed to import plugin module: {e}")
         return 1
 
-    print("\nTesting Mirror Management & Ping...")
+    print("\nTesting Mirror Management, Ping & Bandwidth...")
     scraper = scraper_mod.LibgenScraper(timeout=10)
     all_mirrors = cfg_mod.get_mirrors()
     print(f"Found {len(all_mirrors)} configured mirrors: {all_mirrors[:3]}...")
     primary = all_mirrors[0]
-    ok, latency, msg = scraper.ping_mirror(primary, timeout=8)
-    print(f"✓ Ping {primary}: status={ok}, latency={latency}ms, msg='{msg}'")
+    ok, latency, kb_s, speed_str, msg = scraper.ping_mirror(primary, timeout=8)
+    print(f"✓ Ping {primary}: status={ok}, latency={latency}ms, speed={speed_str}, msg='{msg}'")
 
-    print("\nTesting Custom Mirror Add / Remove...")
+    print("\nTesting Custom Mirror Add / Remove & Order...")
     test_url = "https://libgen.is"
     cfg_mod.add_custom_mirror(test_url)
     assert test_url in cfg_mod.get_mirrors(), "Custom mirror not in get_mirrors"
     print(f"✓ Custom mirror {test_url} added successfully.")
+    cfg_mod.set_mirror_order([test_url] + all_mirrors)
+    assert cfg_mod.prefs["primary_mirror"] == test_url
+    print(f"✓ Mirror reordering / set_mirror_order verified.")
     cfg_mod.remove_custom_mirror(test_url)
     print(f"✓ Custom mirror {test_url} removed successfully.")
 
