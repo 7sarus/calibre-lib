@@ -1,4 +1,4 @@
-PLUGIN_NAME = libgen_downloader_release.zip
+PLUGIN_NAME = libgen_downloader.zip
 SOURCES = __init__.py ui.py dialog.py scraper.py config.py plugin-import-name-libgen_store.txt images/icon.png
 
 .PHONY: all build install uninstall test clean
