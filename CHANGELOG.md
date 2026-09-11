@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.0.1 "Godzila"] - 2026-09-12
+
+- **Fixed Failed Downloads:** Resolved silent download and resolution failures across newer mirrors (`.li`, `.vg`, `.la`) caused by anti-scraping checks.
+- **Animated Cover Previews:** Added a smooth text spinner animation (`⠋ 📖`) in the preview pane while covers load.
+- **Instant Cover Caching:** Book covers are now cached in-memory; previously loaded covers display with zero latency.
+- **Preserved Book Proportions:** Fixed cover image stretching so book covers retain their natural aspect ratios.
+- **Version Indicators:** Current version is now prominently visible in the window title and in the bottom status bar next to the cat.
+
 ## [v1.0.0 "Godzila"] - 2026-09-11
 
 - **Animated Status Cat:** Added an ASCII companion cat (`(=^.^=)`) in the status bar that animates and reacts while searching and downloading.
