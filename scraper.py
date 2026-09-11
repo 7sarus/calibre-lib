@@ -5,9 +5,23 @@
 Core HTML scraping and mirror management for LibGen.
 """
 
+import os
+import shutil
+import threading
+import concurrent.futures
 from urllib.parse import urljoin, quote_plus
 from bs4 import BeautifulSoup
 from calibre import browser
+
+# Use lxml if available (2-4× faster parsing), fall back to html.parser
+try:
+    import lxml  # noqa: F401
+    HTML_PARSER = "lxml"
+except ImportError:
+    HTML_PARSER = "html.parser"
+
+# Thread-local storage for browser instance reuse
+_thread_local = threading.local()
 
 
 class LibgenBook:
@@ -43,35 +57,72 @@ class LibgenScraper:
         "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0"
     )
 
+    @staticmethod
+    def fetch_live_mirrors():
+        """Fetches active LibGen mirrors from open-slum.org tracker."""
+        import urllib.request
+        import re
+        mirrors = set()
+        try:
+            req = urllib.request.Request("https://open-slum.org/libgen.html", headers={"User-Agent": LibgenScraper.USER_AGENT})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                html = resp.read().decode("utf-8")
+                # find all <a ... href="https://libgen.*"...>
+                matches = re.findall(r'href="(https://libgen\.[a-z]+)"', html, re.IGNORECASE)
+                for m in matches:
+                    mirrors.add(m.lower())
+        except Exception as e:
+            print(f"Failed to fetch live mirrors from open-slum: {e}")
+        return list(mirrors)
+
     def __init__(self, mirrors=None, timeout=20):
         self.mirrors = mirrors or self.DEFAULT_MIRRORS
         self.timeout = timeout
 
     def _get_browser(self):
-        b = browser()
-        b.addheaders = [("User-Agent", self.USER_AGENT)]
+        """Returns a thread-local cached browser instance for connection reuse."""
+        import ssl
+        b = getattr(_thread_local, "browser", None)
+        if b is None:
+            b = browser()
+            b.set_handle_robots(False)
+            b.set_handle_refresh(False)
+            b.set_handle_equiv(False)
+            
+            # Disable SSL verification for shady mirrors
+            try:
+                context = ssl._create_unverified_context()
+                import urllib.request
+                import mechanize
+                b.set_ca_data(context=context)
+            except Exception:
+                pass
+            
+            b.addheaders = [("User-Agent", self.USER_AGENT)]
+            _thread_local.browser = b
         return b
 
     def search(
         self,
         query,
         search_field="",
+        category="",
         selected_mirror=None,
-        max_results=25,
+        max_results=5,
         preferred_language="Any",
         preferred_format="Any",
         filter_mode="Prioritize",
+        progress_callback=None,
+        abort_check=None,
     ):
         """
-        Search LibGen mirrors for books matching the query.
-        Supports field targeting and mirror selection with auto-failover.
+        Search LibGen mirrors concurrently for books matching the query.
+        First mirror to return results wins; all others are cancelled.
         """
-        b = self._get_browser()
-        books = []
-        last_error = None
 
         encoded_query = quote_plus(query.strip())
         field_param = f"&columns%5B%5D={search_field}" if search_field else ""
+        topic_param = f"&topics%5B%5D={category}" if category else ""
 
         # Determine mirror order: selected mirror first (if valid), followed by remaining mirrors
         mirror_order = list(self.mirrors)
@@ -79,25 +130,57 @@ class LibgenScraper:
             clean_selected = selected_mirror.strip().rstrip("/")
             mirror_order = [clean_selected] + [m for m in mirror_order if m.rstrip("/") != clean_selected]
 
-        for mirror in mirror_order:
-            mirror = mirror.strip().rstrip("/")
-            if not mirror:
-                continue
+        clean_mirrors = [m.strip().rstrip("/") for m in mirror_order if m.strip()]
+        total_mirrors = len(clean_mirrors)
 
-            search_url = f"{mirror}/index.php?req={encoded_query}{field_param}&res={max_results * 2}"
+        # Concurrent first-result-wins: fire searches to all mirrors, return first success
+        found_event = threading.Event()
+
+        def _search_mirror(mirror):
+            if found_event.is_set() or (abort_check and abort_check()):
+                return None, mirror
             try:
+                b = self._get_browser()
+                search_url = f"{mirror}/index.php?req={encoded_query}{field_param}{topic_param}&res={max_results * 2}"
                 resp = b.open(search_url, timeout=self.timeout)
+                if found_event.is_set() or (abort_check and abort_check()):
+                    return None, mirror
                 html = resp.read()
-                soup = BeautifulSoup(html, "html.parser")
-                books = self._parse_search_page(soup, mirror)
-                if books:
-                    break
-            except Exception as e:
-                last_error = e
-                continue
+                soup = BeautifulSoup(html, HTML_PARSER)
+                result = self._parse_search_page(soup, mirror)
+                if result:
+                    found_event.set()
+                    return result, mirror
+            except Exception:
+                pass
+            return None, mirror
 
-        if not books and last_error and not books:
-            # If all mirrors failed, return empty or raise
+        books = []
+        winning_mirror = ""
+        mirrors_done = 0
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(total_mirrors, 5)) as pool:
+            futures = {pool.submit(_search_mirror, m): m for m in clean_mirrors}
+            for fut in concurrent.futures.as_completed(futures):
+                if abort_check and abort_check():
+                    raise Exception("Search stopped by user")
+                mirrors_done += 1
+                if progress_callback:
+                    progress_callback(mirrors_done, total_mirrors, futures[fut])
+                try:
+                    result, mirror = fut.result()
+                    if result and not books:
+                        books = result
+                        winning_mirror = mirror
+                        try:
+                            from calibre_plugins.libgen_store.config import record_successful_mirror
+                            record_successful_mirror(mirror)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+        if not books:
             return []
 
         # Filter and rank books based on language and format preferences
@@ -205,24 +288,41 @@ class LibgenScraper:
         if not detail_url:
             return None, None
 
+        from urllib.parse import urlparse
         t = timeout or self.timeout
         b = self._get_browser()
+        
+        # Inject dynamic Referer to bypass anti-scraper mechanisms (e.g. on libgen.li)
+        parsed = urlparse(detail_url)
+        referer = f"{parsed.scheme}://{parsed.netloc}/"
+        b.addheaders = [("User-Agent", self.USER_AGENT), ("Referer", referer)]
+        
         try:
             resp = b.open(detail_url, timeout=t)
-            soup = BeautifulSoup(resp.read(), "html.parser")
+            soup = BeautifulSoup(resp.read(), HTML_PARSER)
 
             # Extract direct get.php link
             get_link = soup.select_one('a[href*="get.php"]')
             if not get_link:
-                # Fallback: look for link containing 'GET' text
+                # Look for links containing common download text/URLs
                 for a in soup.find_all("a"):
-                    if a.get_text(strip=True).upper() == "GET" and a.get("href"):
+                    text = a.get_text(strip=True).upper()
+                    href = a.get("href", "")
+                    if text in ["GET", "CLOUDFLARE", "IPFS.IO", "PINATA", "DOWNLOAD"] and href:
+                        get_link = a
+                        break
+                    if "library.lol/main/" in href or "libgen.me/item/detail/" in href:
                         get_link = a
                         break
 
             download_url = (
                 urljoin(detail_url, get_link["href"]) if get_link and get_link.get("href") else None
             )
+
+            # Debugging step: if it's still missing, we want to know what the HTML had
+            if not download_url:
+                with open("/tmp/failed_resolve.html", "w") as f:
+                    f.write(soup.prettify()[:5000])
 
             # Extract cover image (ignore blank.png if possible)
             cover_url = None
@@ -233,10 +333,11 @@ class LibgenScraper:
                     break
 
             return download_url, cover_url
-        except Exception:
+        except Exception as e:
+            print(f"Exception in resolve_details for {detail_url}: {e}")
             return None, None
 
-    def download_file(self, download_url, destination_path, progress_callback=None):
+    def download_file(self, download_url, destination_path, progress_callback=None, abort_check=None):
         """
         Streams a remote file to destination_path with chunked writing.
         Calls progress_callback(bytes_read, total_bytes) on each chunk.
@@ -251,21 +352,454 @@ class LibgenScraper:
             total_bytes = 0
 
         bytes_read = 0
-        chunk_size = 64 * 1024  # 64 KB
+        chunk_size = 128 * 1024  # 128 KB
+        import time
+        start_time = time.time()
 
         with open(destination_path, "wb") as f:
             while True:
+                if abort_check and abort_check():
+                    raise Exception("Stopped by user")
                 chunk = resp.read(chunk_size)
                 if not chunk:
                     break
                 f.write(chunk)
                 bytes_read += len(chunk)
                 if progress_callback:
-                    progress_callback(bytes_read, total_bytes)
+                    elapsed = time.time() - start_time
+                    speed_kb = (bytes_read / 1024) / elapsed if elapsed > 0 else 0
+                    progress_callback(bytes_read, total_bytes, speed_kb)
 
         return destination_path
 
+    def get_fallback_detail_urls(self, detail_url):
+        """
+        Extracts the MD5 and path from a detail URL and constructs equivalent URLs
+        across all configured mirrors for robust auto-failover, prioritizing the last successful mirror.
+        """
+        import re
+        from urllib.parse import urlparse
+
+        if not detail_url:
+            return []
+
+        urls = []
+        parsed = urlparse(detail_url)
+        md5_match = re.search(r'md5=([a-fA-F0-9]{32})', detail_url)
+        md5 = md5_match.group(1) if md5_match else None
+
+        last_succ = ""
+        try:
+            from calibre_plugins.libgen_store.config import prefs
+            last_succ = prefs.get("last_successful_mirror", "").strip().rstrip("/")
+        except Exception:
+            pass
+
+        ordered_mirrors = list(self.mirrors)
+        if last_succ:
+            clean_last = last_succ.rstrip("/")
+            ordered_mirrors = [clean_last] + [m for m in ordered_mirrors if m.rstrip("/") != clean_last]
+
+        if md5:
+            urls.append(f"https://library.lol/main/{md5}")
+            
+        for m in ordered_mirrors:
+            clean_m = m.strip().rstrip("/")
+            if not clean_m:
+                continue
+
+            if parsed.path:
+                v1 = f"{clean_m}{parsed.path}"
+                if parsed.query:
+                    v1 += f"?{parsed.query}"
+                if v1 not in urls:
+                    urls.append(v1)
+
+            if md5:
+                v2 = f"{clean_m}/ads.php?md5={md5}"
+                if v2 not in urls:
+                    urls.append(v2)
+
+        if md5 and f"https://libgen.li/ads.php?md5={md5}" not in urls:
+            urls.append(f"https://libgen.li/ads.php?md5={md5}")
+
+        if detail_url not in urls:
+            urls.append(detail_url)
+
+        return urls
+
+    def _probe_source(self, url, timeout=10):
+        """
+        Probes a candidate mirror detail URL, resolves direct link,
+        follows redirect to CDN stream URL, checks range support and Content-Length.
+        Reads only 1 byte to validate the stream — does NOT download the full file.
+        Returns dict with mirror info or None.
+        """
+        from urllib.parse import urlparse
+        try:
+            host = urlparse(url).netloc
+            download_url, cover_url = self.resolve_details(url, timeout=timeout)
+            if not download_url:
+                return None
+
+            b = self._get_browser()
+            resp = b.open(download_url, timeout=timeout)
+            stream_url = resp.geturl()
+            headers = resp.info()
+
+            try:
+                total_bytes = int(headers.get("Content-Length", 0))
+            except (ValueError, TypeError):
+                total_bytes = 0
+
+            accepts_ranges = "bytes" in headers.get("Accept-Ranges", "").lower()
+
+            # Read only 1 byte to validate the connection, then discard the rest
+            resp.read(1)
+
+            return {
+                "host": host,
+                "detail_url": url,
+                "direct_url": download_url,
+                "stream_url": stream_url,
+                "total_bytes": total_bytes,
+                "accepts_ranges": accepts_ranges,
+                "cover_url": cover_url,
+            }
+        except Exception as e:
+            print(f"[_probe_source] Exception for {url}: {e}")
+            return None
+
+    def _download_segment(
+        self,
+        candidate_stream_urls,
+        start_byte,
+        end_byte,
+        part_path,
+        progress_chunk_cb=None,
+        abort_check=None,
+    ):
+        """
+        Downloads a byte range [start_byte, end_byte] to part_path with multi-source failover.
+        """
+        import mechanize
+        expected_len = end_byte - start_byte + 1
+        last_err = None
+
+        for stream_url in candidate_stream_urls:
+            if abort_check and abort_check():
+                raise Exception("Stopped by user")
+
+            bytes_written = 0
+            chunk_size = 128 * 1024
+            try:
+                b = self._get_browser()
+                req = mechanize.Request(
+                    stream_url,
+                    headers={
+                        "Range": f"bytes={start_byte}-{end_byte}",
+                        "User-Agent": self.USER_AGENT,
+                    },
+                )
+                resp = b.open(req, timeout=self.timeout * 2)
+                code = getattr(resp, "code", 200)
+                if code not in (200, 206):
+                    raise Exception(f"HTTP {code} from stream source")
+
+                with open(part_path, "wb") as f:
+                    while True:
+                        if abort_check and abort_check():
+                            raise Exception("Stopped by user")
+                        chunk = resp.read(chunk_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        bytes_written += len(chunk)
+                        if progress_chunk_cb:
+                            progress_chunk_cb(len(chunk))
+
+                if expected_len > 0 and bytes_written != expected_len:
+                    raise Exception(
+                        f"Incomplete segment: got {bytes_written}/{expected_len} bytes"
+                    )
+
+                return part_path
+            except Exception as e:
+                last_err = e
+                if os.path.exists(part_path):
+                    try:
+                        os.remove(part_path)
+                    except Exception:
+                        pass
+                continue
+
+        raise Exception(f"Segment {start_byte}-{end_byte} failed on all sources: {last_err}")
+
+    def _segmented_download(
+        self,
+        range_sources,
+        destination_path,
+        total_bytes,
+        cover_url,
+        log_callback=None,
+        progress_callback=None,
+        link_callback=None,
+        abort_check=None,
+    ):
+        """
+        Executes parallel segmented download across multiple working mirrors,
+        pieces the parts together, and verifies integrity.
+        """
+        num_segments = min(len(range_sources), 4)
+        part_size = total_bytes // num_segments
+        ranges = []
+        for i in range(num_segments):
+            start = i * part_size
+            end = total_bytes - 1 if i == num_segments - 1 else (i + 1) * part_size - 1
+            ranges.append((start, end))
+
+        source_hosts = [s["host"] for s in range_sources[:num_segments]]
+        if log_callback:
+            log_callback(
+                f"⚡ Piece-together active: {num_segments} parallel segments across {', '.join(source_hosts)}"
+            )
+
+        if link_callback:
+            primary_host = range_sources[0]["host"]
+            link_callback(range_sources[0]["stream_url"], "segmented")
+
+        all_stream_urls = [s["stream_url"] for s in range_sources]
+
+        progress_lock = threading.Lock()
+        shared_bytes = [0]
+        import time
+        start_time = time.time()
+
+        def on_chunk(chunk_len):
+            with progress_lock:
+                shared_bytes[0] += chunk_len
+                current = shared_bytes[0]
+            if progress_callback:
+                elapsed = time.time() - start_time
+                speed_kb = (current / 1024) / elapsed if elapsed > 0 else 0
+                progress_callback(current, total_bytes, speed_kb)
+
+        part_paths = [f"{destination_path}.part{i}" for i in range(num_segments)]
+
+        def worker(idx):
+            start, end = ranges[idx]
+            rotated_urls = all_stream_urls[idx:] + all_stream_urls[:idx]
+            part_path = part_paths[idx]
+            return self._download_segment(
+                rotated_urls,
+                start,
+                end,
+                part_path,
+                progress_chunk_cb=on_chunk,
+                abort_check=abort_check,
+            )
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=num_segments) as pool:
+                futures = [pool.submit(worker, i) for i in range(num_segments)]
+                for fut in concurrent.futures.as_completed(futures):
+                    if abort_check and abort_check():
+                        raise Exception("Stopped by user")
+                    fut.result()
+
+            if abort_check and abort_check():
+                raise Exception("Stopped by user")
+
+            if log_callback:
+                log_callback(f"Piecing together {num_segments} segments into complete file...")
+
+            dest_dir = os.path.dirname(destination_path)
+            if dest_dir and not os.path.exists(dest_dir):
+                os.makedirs(dest_dir, exist_ok=True)
+
+            with open(destination_path, "wb") as outfile:
+                for part_path in part_paths:
+                    with open(part_path, "rb") as infile:
+                        shutil.copyfileobj(infile, outfile, length=128 * 1024)
+                    try:
+                        os.remove(part_path)
+                    except Exception:
+                        pass
+
+            final_size = os.path.getsize(destination_path)
+            if total_bytes > 0 and final_size != total_bytes:
+                raise Exception(f"Reassembled file size mismatch: expected {total_bytes}, got {final_size}")
+
+            if log_callback:
+                log_callback(f"✓ Reassembled complete file ({final_size:,} bytes) across {num_segments} mirrors.")
+
+            try:
+                from calibre_plugins.libgen_store.config import record_successful_mirror
+                for s in range_sources[:num_segments]:
+                    record_successful_mirror(f"https://{s['host']}")
+            except Exception:
+                pass
+
+            return destination_path, cover_url
+
+        except Exception as e:
+            for p in part_paths:
+                if os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except Exception:
+                        pass
+            if os.path.exists(destination_path):
+                try:
+                    os.remove(destination_path)
+                except Exception:
+                    pass
+            raise e
+
+    def resolve_and_download(
+        self,
+        detail_url,
+        destination_path,
+        log_callback=None,
+        progress_callback=None,
+        link_callback=None,
+        abort_check=None,
+    ):
+        """
+        Resolves direct download links and streams files.
+        Concurrently probes candidate mirrors, downloads via multi-threaded segmented
+        piece-together if supported, with automatic failover to single-stream mirror downloads.
+        """
+        from urllib.parse import urlparse
+
+        candidate_urls = self.get_fallback_detail_urls(detail_url)
+        if not candidate_urls:
+            raise Exception("No candidate mirror URLs found")
+
+        if log_callback:
+            log_callback(f"Probing {len(candidate_urls)} candidate mirrors concurrently for MD5 file...")
+
+        # Step 1: Concurrently probe candidate mirrors
+        working_sources = []
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(candidate_urls), 5)) as pool:
+            futures = {pool.submit(self._probe_source, u, 10): u for u in candidate_urls}
+            for fut in concurrent.futures.as_completed(futures):
+                if abort_check and abort_check():
+                    raise Exception("Stopped by user")
+                try:
+                    res = fut.result()
+                    if res:
+                        working_sources.append(res)
+                        if log_callback:
+                            log_callback(f"✓ Mirror {res['host']} online (size: {res['total_bytes']:,} bytes, range: {res['accepts_ranges']})")
+                except Exception:
+                    pass
+
+        # Step 2: Check if multi-mirror segmented piece-together is viable
+        range_sources = [
+            s for s in working_sources
+            if s.get("accepts_ranges") and s.get("total_bytes", 0) > 200 * 1024
+        ]
+
+        if len(range_sources) >= 2:
+            try:
+                total_bytes = range_sources[0]["total_bytes"]
+                cover_url = next((s["cover_url"] for s in range_sources if s.get("cover_url")), None)
+                return self._segmented_download(
+                    range_sources,
+                    destination_path,
+                    total_bytes,
+                    cover_url,
+                    log_callback=log_callback,
+                    progress_callback=progress_callback,
+                    link_callback=link_callback,
+                    abort_check=abort_check,
+                )
+            except Exception as seg_err:
+                if abort_check and abort_check():
+                    raise Exception("Stopped by user")
+                if log_callback:
+                    log_callback(f"⚠ Segmented download error ({seg_err}). Falling back to single-stream...")
+
+        # Step 3: Fallback - single stream download from first working source or sequential failover
+        if working_sources:
+            for src in working_sources:
+                if abort_check and abort_check():
+                    raise Exception("Stopped by user")
+                host = src["host"]
+                if link_callback:
+                    link_callback(src["stream_url"], "streaming")
+                if log_callback:
+                    log_callback(f"Streaming directly via {host}...")
+                try:
+                    self.download_file(
+                        src["stream_url"],
+                        destination_path,
+                        progress_callback=progress_callback,
+                        abort_check=abort_check,
+                    )
+                    if log_callback:
+                        log_callback(f"✓ Download completed successfully via {host}.")
+                    try:
+                        from calibre_plugins.libgen_store.config import record_successful_mirror
+                        record_successful_mirror(f"https://{host}")
+                    except Exception:
+                        pass
+                    return destination_path, src.get("cover_url")
+                except Exception as stream_err:
+                    if abort_check and abort_check():
+                        raise Exception("Stopped by user")
+                    if log_callback:
+                        log_callback(f"Stream error on {host}: {stream_err}. Retrying next source...")
+                    continue
+
+        # Step 4: Sequential fallback across all candidate URLs if probe missed anything
+        last_error = None
+        for url in candidate_urls:
+            if abort_check and abort_check():
+                raise Exception("Stopped by user")
+
+            host = urlparse(url).netloc
+            if link_callback:
+                link_callback(url, "resolving")
+            if log_callback:
+                log_callback(f"Trying mirror link (sequential fallback): {url}")
+
+            download_url, cover_url = self.resolve_details(url, timeout=10)
+            if abort_check and abort_check():
+                raise Exception("Stopped by user")
+
+            if not download_url:
+                continue
+
+            if link_callback:
+                link_callback(download_url, "streaming")
+
+            try:
+                self.download_file(
+                    download_url,
+                    destination_path,
+                    progress_callback=progress_callback,
+                    abort_check=abort_check,
+                )
+                if log_callback:
+                    log_callback(f"✓ Download completed successfully via {host}.")
+                try:
+                    from calibre_plugins.libgen_store.config import record_successful_mirror
+                    record_successful_mirror(f"https://{host}")
+                except Exception:
+                    pass
+                return destination_path, cover_url
+            except Exception as e:
+                if abort_check and abort_check():
+                    raise Exception("Stopped by user")
+                last_error = e
+                continue
+
+        raise Exception(f"All mirrors failed: {last_error or 'Could not resolve download links'}")
+
     def ping_mirror(self, mirror_url, timeout=8):
+
         """
         Tests a mirror URL and measures both latency and bandwidth by downloading a small payload.
         Returns:
