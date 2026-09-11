@@ -9,6 +9,8 @@ mirror selection/health checks, and bulk queue download manager directly inside 
 import os
 import re
 import tempfile
+import threading
+import concurrent.futures
 
 from qt.core import (
     Qt,
@@ -30,7 +32,15 @@ from qt.core import (
     QWidget,
     QColor,
     QGroupBox,
+    QMenu,
+    QShortcut,
+    QKeySequence,
+    QPlainTextEdit,
+    QTimer,
+    QCheckBox,
+    QSpinBox,
 )
+
 
 from calibre_plugins.libgen_store.config import (
     prefs,
@@ -38,6 +48,7 @@ from calibre_plugins.libgen_store.config import (
     SUPPORTED_FORMATS,
     FILTER_MODES,
     SEARCH_FIELDS,
+    CATEGORIES,
     get_mirrors,
     set_mirror_order,
     add_custom_mirror,
@@ -50,19 +61,42 @@ def sanitize_filename(name):
     """Clean filename of illegal filesystem characters."""
     return re.sub(r'[\\/*?:"<>|]', "", name).strip()[:100]
 
+class SizeTableWidgetItem(QTableWidgetItem):
+    def __lt__(self, other):
+        def _parse(s):
+            if not s or s == "-": return 0.0
+            s_upper = s.upper()
+            try:
+                val = float(''.join(c for c in s_upper if c.isdigit() or c == '.'))
+                if "KB" in s_upper: return val * 1024
+                if "MB" in s_upper: return val * 1024 * 1024
+                if "GB" in s_upper: return val * 1024 * 1024 * 1024
+                return val
+            except:
+                return 0.0
+        return _parse(self.text()) < _parse(other.text())
+
 
 class SearchWorker(QThread):
-    finished_signal = pyqtSignal(list)
+    finished_signal = pyqtSignal(list, str)   # books, mirror_used
     error_signal = pyqtSignal(str)
+    progress_signal = pyqtSignal(int, int, str)  # current_idx, total_mirrors, mirror_url
 
-    def __init__(self, query, search_field, selected_mirror, language, fmt, filter_mode, parent=None):
+    def __init__(self, query, search_field, category, selected_mirror, language, fmt, filter_mode, max_results=5, parent=None):
         super().__init__(parent)
         self.query = query
         self.search_field = search_field
+        self.category = category
         self.selected_mirror = selected_mirror
         self.language = language
         self.fmt = fmt
         self.filter_mode = filter_mode
+        self.max_results = max_results
+        self._is_aborted = False
+        self._current_mirror = ""
+
+    def abort(self):
+        self._is_aborted = True
 
     def run(self):
         try:
@@ -70,97 +104,342 @@ class SearchWorker(QThread):
             timeout = int(prefs.get("timeout", 20))
 
             scraper = LibgenScraper(mirrors=mirrors, timeout=timeout)
+
+            def on_progress(idx, total, mirror):
+                self._current_mirror = mirror
+                self.progress_signal.emit(idx, total, mirror)
+
             books = scraper.search(
                 query=self.query,
                 search_field=self.search_field,
+                category=self.category,
                 selected_mirror=self.selected_mirror,
-                max_results=int(prefs.get("max_results", 50)),
+                max_results=self.max_results,
                 preferred_language=self.language,
                 preferred_format=self.fmt,
                 filter_mode=self.filter_mode,
+                progress_callback=on_progress,
+                abort_check=lambda: self._is_aborted,
             )
-            self.finished_signal.emit(books)
+            if self._is_aborted:
+                return
+            self.finished_signal.emit(books, self._current_mirror)
         except Exception as e:
-            self.error_signal.emit(str(e))
+            if not self._is_aborted:
+                self.error_signal.emit(str(e))
 
 
 class MirrorHealthWorker(QThread):
     mirror_tested = pyqtSignal(str, bool, int, float, str, str)  # url, is_ok, latency_ms, kb_s, speed_str, status_msg
     all_tested = pyqtSignal()
+    mirrors_discovered = pyqtSignal(list)
 
     def __init__(self, mirrors, parent=None):
         super().__init__(parent)
         self.mirrors = mirrors
 
     def run(self):
+        import concurrent.futures
         scraper = LibgenScraper(timeout=8)
-        for mirror in self.mirrors:
-            is_ok, ms, kb_s, speed_str, msg = scraper.ping_mirror(mirror, timeout=8)
-            self.mirror_tested.emit(mirror, is_ok, ms, kb_s, speed_str, msg)
+        
+        # 1. Fetch live mirrors from open-slum.org
+        live_mirrors = scraper.fetch_live_mirrors()
+        if live_mirrors:
+            self.mirrors_discovered.emit(live_mirrors)
+            for m in live_mirrors:
+                if m not in self.mirrors:
+                    self.mirrors.append(m)
+
+        def _ping(mirror):
+            return mirror, scraper.ping_mirror(mirror, timeout=8)
+            
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(self.mirrors))) as pool:
+            futures = [pool.submit(_ping, m) for m in self.mirrors]
+            for fut in concurrent.futures.as_completed(futures):
+                try:
+                    mirror, (is_ok, ms, kb_s, speed_str, msg) = fut.result()
+                    self.mirror_tested.emit(mirror, is_ok, ms, kb_s, speed_str, msg)
+                except Exception:
+                    pass
+        
         self.all_tested.emit()
 
+class CoverFetchWorker(QThread):
+    cover_fetched = pyqtSignal(object)  # passing QPixmap as object to avoid import issues if not explicitly imported
 
-class BulkDownloadWorker(QThread):
-    item_status = pyqtSignal(int, str)             # index, status text
-    item_progress = pyqtSignal(int, int, int)       # index, bytes_read, total_bytes
-    book_downloaded = pyqtSignal(int, str)         # index, file_path
-    all_done = pyqtSignal(int, int)                # success_count, fail_count
-
-    def __init__(self, items, parent=None):
+    def __init__(self, detail_url, parent=None):
         super().__init__(parent)
-        self.items = items
+        self.detail_url = detail_url
         self._is_aborted = False
 
     def abort(self):
         self._is_aborted = True
 
     def run(self):
+        import urllib.request
+        import re
+        from urllib.parse import urljoin
+        from qt.core import QPixmap
+        try:
+            req = urllib.request.Request(self.detail_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if self._is_aborted: return
+                html = resp.read().decode("utf-8", errors="ignore")
+                match = re.search(r'<img[^>]+src="([^"]+cover[^"]+)"', html, re.IGNORECASE)
+                if not match:
+                    match = re.search(r'<img[^>]+src="([^"]+\.jpg)"', html, re.IGNORECASE)
+                if match:
+                    src = match.group(1)
+                    if not src.startswith("http"):
+                        src = urljoin(self.detail_url, src)
+                    
+                    if self._is_aborted: return
+                    img_req = urllib.request.Request(src, headers={"User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(img_req, timeout=5) as img_resp:
+                        if self._is_aborted: return
+                        data = img_resp.read()
+                        pixmap = QPixmap()
+                        if pixmap.loadFromData(data):
+                            self.cover_fetched.emit(pixmap)
+        except Exception:
+            pass
+
+class LiveMirrorWorker(QThread):
+    mirrors_discovered = pyqtSignal(list)
+    def run(self):
+        try:
+            from calibre_plugins.libgen_store.scraper import LibgenScraper
+            mirrors = LibgenScraper.fetch_live_mirrors()
+            self.mirrors_discovered.emit(mirrors)
+        except Exception:
+            self.mirrors_discovered.emit([])
+
+class BulkDownloadWorker(QThread):
+    item_status = pyqtSignal(int, str)             # index, status text
+    item_progress = pyqtSignal(int, int, int, float)  # index, bytes_read, total_bytes, speed_kb
+    log_message = pyqtSignal(str)                  # timestamped scrolling log line
+    link_trying = pyqtSignal(int, str, str)        # index, url, stage ("resolving" or "streaming")
+    all_done = pyqtSignal(list, int, bool)         # downloaded_items, fail_count, is_aborted
+
+    def __init__(self, items, auto_retry=False, parent=None):
+        super().__init__(parent)
+        self.items = items
+        self.auto_retry = auto_retry
+        self._is_aborted = False
+
+    def abort(self):
+        self._is_aborted = True
+
+    def run(self):
+        import time
         mirrors = get_mirrors()
         timeout = int(prefs.get("timeout", 20))
         scraper = LibgenScraper(mirrors=mirrors, timeout=timeout)
 
         temp_dir = tempfile.mkdtemp(prefix="calibre_libgen_")
-        success_count = 0
+        downloaded_items = []
         fail_count = 0
 
-        for idx, item in enumerate(self.items):
-            if self._is_aborted:
+        while not self._is_aborted:
+            fail_count = 0
+            any_processed = False
+
+            pending_items = [(idx, i) for idx, i in enumerate(self.items) if i.get("status") not in ("✓ Added to Library", "Downloaded", "✓ Downloaded (Pending Review)")]
+            total_pending = len(pending_items)
+            current_num = [0]
+            dl_lock = threading.Lock()
+            fail_count_ref = [0]
+
+            def process_item(idx, item):
+                if self._is_aborted:
+                    return
+
+                book = item["book"]
+                with dl_lock:
+                    current_num[0] += 1
+                    c_num = current_num[0]
+
+                ts = time.strftime('%H:%M:%S')
+                short_title = (book.title or "Unknown")[:45]
+                self.log_message.emit(f"[{ts}] [{c_num}/{total_pending}] Starting: \"{short_title}\"")
+                self.item_status.emit(idx, "Resolving mirror link...")
+
+                ext = (book.extension or "epub").lower()
+                safe_title = sanitize_filename(book.title or "Unknown")
+                safe_author = sanitize_filename(book.author or "Unknown")
+                dest_file = os.path.join(temp_dir, f"{safe_title} - {safe_author}.{ext}")
+
+                def on_log(msg):
+                    t_now = time.strftime('%H:%M:%S')
+                    self.log_message.emit(f"[{t_now}] {msg}")
+
+                def on_progress(bytes_read, total, speed_kb=0.0):
+                    self.item_progress.emit(idx, bytes_read, total, float(speed_kb))
+
+                def on_link(url, stage):
+                    self.link_trying.emit(idx, url, stage)
+
+                try:
+                    self.item_status.emit(idx, "Downloading...")
+                    dest_path, cover_url = scraper.resolve_and_download(
+                        book.detail_url,
+                        dest_file,
+                        log_callback=on_log,
+                        progress_callback=on_progress,
+                        link_callback=on_link,
+                        abort_check=lambda: self._is_aborted,
+                    )
+                    item["dest_file"] = dest_path
+                    item["status"] = "Downloaded"
+                    self.item_status.emit(idx, "✓ Downloaded (Pending Review)")
+                    with dl_lock:
+                        downloaded_items.append({
+                            "index": idx,
+                            "book": book,
+                            "file_path": dest_path,
+                        })
+                except Exception as e:
+                    err_msg = str(e)
+                    if "stopped by user" in err_msg.lower() or self._is_aborted:
+                        if os.path.exists(dest_file):
+                            try:
+                                os.remove(dest_file)
+                            except Exception:
+                                pass
+                        self.item_status.emit(idx, "Stopped")
+                        on_log(f"⚠ Stopped downloading \"{short_title}\" by user request.")
+                        return
+                    self.item_status.emit(idx, f"Failed: {err_msg[:40]}")
+                    on_log(f"✗ Failed to download \"{short_title}\": {err_msg}")
+                    with dl_lock:
+                        fail_count_ref[0] += 1
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                futures = [pool.submit(process_item, idx, item) for idx, item in pending_items]
+                for fut in concurrent.futures.as_completed(futures):
+                    pass
+            
+            fail_count = fail_count_ref[0]
+
+            if not self.auto_retry or fail_count == 0 or self._is_aborted:
                 break
+            
+            if self.auto_retry and fail_count > 0:
+                t_now = time.strftime('%H:%M:%S')
+                self.log_message.emit(f"[{t_now}] ↻ Auto-retry enabled. Retrying {fail_count} failed item(s) in 3 seconds...")
+                for _ in range(30):
+                    if self._is_aborted:
+                        break
+                    time.sleep(0.1)
 
+        self.all_done.emit(downloaded_items, fail_count, bool(self._is_aborted))
+
+
+class ReviewImportDialog(QDialog):
+    """Review modal presented after download completion or abortion to select books for Calibre import."""
+
+    def __init__(self, downloaded_items, is_aborted=False, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Review Downloaded Books for Import")
+        self.resize(760, 420)
+        self.downloaded_items = downloaded_items
+        self.is_aborted = is_aborted
+        self.approved_items = []
+
+        layout = QVBoxLayout(self)
+
+        status_prefix = "<b>Download stopped early.</b> " if is_aborted else "<b>Bulk download finished.</b> "
+        info_text = (
+            f"{status_prefix}{len(downloaded_items)} book(s) were successfully downloaded.<br>"
+            "Review and choose which books to import into your Calibre library:"
+        )
+        banner = QLabel(info_text, self)
+        banner.setWordWrap(True)
+        banner.setStyleSheet(
+            "padding: 10px 14px; background-color: #2b3d4f; color: white; border-radius: 4px; font-size: 13px;"
+        )
+        layout.addWidget(banner)
+
+        self.table = QTableWidget(self)
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels([
+            "Import?", "Title", "Author", "Format", "Size"
+        ])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+
+        self.table.setRowCount(len(downloaded_items))
+        for row, item in enumerate(downloaded_items):
             book = item["book"]
-            if item.get("status") == "Completed":
-                continue
+            cb_item = QTableWidgetItem()
+            cb_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            cb_item.setCheckState(Qt.CheckState.Checked)
+            self.table.setItem(row, 0, cb_item)
+            self.table.setItem(row, 1, QTableWidgetItem(book.title or "Unknown"))
+            self.table.setItem(row, 2, QTableWidgetItem(book.author or "Unknown"))
+            self.table.setItem(row, 3, QTableWidgetItem(book.extension or "EPUB"))
+            self.table.setItem(row, 4, QTableWidgetItem(book.size or "-"))
 
-            self.item_status.emit(idx, "Resolving download link...")
-            download_url, cover_url = scraper.resolve_details(book.detail_url)
+        layout.addWidget(self.table)
 
-            if not download_url:
-                self.item_status.emit(idx, "Failed: Mirror link unavailable")
-                fail_count += 1
-                continue
+        sel_bar = QHBoxLayout()
+        sel_all_btn = QPushButton("Select All", self)
+        sel_all_btn.clicked.connect(self.select_all)
+        sel_bar.addWidget(sel_all_btn)
 
-            # Build destination filename
-            ext = (book.extension or "epub").lower()
-            safe_title = sanitize_filename(book.title or "Unknown")
-            safe_author = sanitize_filename(book.author or "Unknown")
-            dest_file = os.path.join(temp_dir, f"{safe_title} - {safe_author}.{ext}")
+        desel_all_btn = QPushButton("Deselect All", self)
+        desel_all_btn.clicked.connect(self.deselect_all)
+        sel_bar.addWidget(desel_all_btn)
 
-            self.item_status.emit(idx, "Downloading...")
+        sel_bar.addStretch()
+        layout.addLayout(sel_bar)
 
-            def on_progress(bytes_read, total):
-                self.item_progress.emit(idx, bytes_read, total)
+        btn_bar = QHBoxLayout()
+        discard_btn = QPushButton("Discard / Skip", self)
+        discard_btn.clicked.connect(self.reject)
+        btn_bar.addWidget(discard_btn)
 
-            try:
-                scraper.download_file(download_url, dest_file, progress_callback=on_progress)
-                self.item_status.emit(idx, "Adding to Library...")
-                self.book_downloaded.emit(idx, dest_file)
-                self.item_status.emit(idx, "✓ Added to Library")
-                success_count += 1
-            except Exception as e:
-                self.item_status.emit(idx, f"Download failed: {e}")
-                fail_count += 1
+        btn_bar.addStretch()
 
-        self.all_done.emit(success_count, fail_count)
+        import_sel_btn = QPushButton("Import Selected", self)
+        import_sel_btn.clicked.connect(self.accept_selected)
+        btn_bar.addWidget(import_sel_btn)
+
+        import_all_btn = QPushButton("Import All", self)
+        import_all_btn.setStyleSheet("font-weight: bold; background-color: #2b5b84; color: white; padding: 6px 14px;")
+        import_all_btn.clicked.connect(self.accept_all)
+        btn_bar.addWidget(import_all_btn)
+
+        layout.addLayout(btn_bar)
+
+    def select_all(self):
+        for r in range(self.table.rowCount()):
+            it = self.table.item(r, 0)
+            if it:
+                it.setCheckState(Qt.CheckState.Checked)
+
+    def deselect_all(self):
+        for r in range(self.table.rowCount()):
+            it = self.table.item(r, 0)
+            if it:
+                it.setCheckState(Qt.CheckState.Unchecked)
+
+    def accept_all(self):
+        self.approved_items = list(self.downloaded_items)
+        self.accept()
+
+    def accept_selected(self):
+        self.approved_items = []
+        for r in range(self.table.rowCount()):
+            it = self.table.item(r, 0)
+            if it and it.checkState() == Qt.CheckState.Checked:
+                self.approved_items.append(self.downloaded_items[r])
+        self.accept()
 
 
 class LibgenDialog(QDialog):
@@ -176,91 +455,183 @@ class LibgenDialog(QDialog):
         self.download_worker = None
         self.search_worker = None
         self.health_worker = None
+        
+        # Debounce timer for saving preferences
+        self.save_timer = QTimer(self)
+        self.save_timer.setSingleShot(True)
+        self.save_timer.setInterval(500)
+        self.save_timer.timeout.connect(self._do_save_all_field_preferences)
 
         self._setup_ui()
         self.populate_mirrors_table()
 
     def _setup_ui(self):
-        main_layout = QVBoxLayout(self)
+        base_layout = QHBoxLayout(self)
+        
+        left_widget = QWidget()
+        main_layout = QVBoxLayout(left_widget)
+        base_layout.addWidget(left_widget, stretch=5)
+        
+        right_widget = QWidget()
+        right_layout = QVBoxLayout(right_widget)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        
+        right_layout.addWidget(QLabel("<b>Cover Preview</b>"))
+        self.cover_label = QLabel("No Selection", self)
+        self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.cover_label.setFixedSize(200, 300)
+        self.cover_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444; color: #888;")
+        self.cover_label.setScaledContents(True)
+        right_layout.addWidget(self.cover_label)
+
+        right_layout.addWidget(QLabel("<b>Live Mirror Status</b>"))
+        self.side_mirror_status = QPlainTextEdit(self)
+        self.side_mirror_status.setReadOnly(True)
+        self.side_mirror_status.setFixedWidth(200)
+        self.side_mirror_status.setStyleSheet("background-color: #1e1e1e; color: #a5d6ff; font-family: monospace; font-size: 11px;")
+        right_layout.addWidget(self.side_mirror_status)
+        base_layout.addWidget(right_widget, stretch=1)
 
         # Top Bar: Search Query, Field, Language, Format, and Mirror Selectors
-        top_bar = QHBoxLayout()
+        top_panel = QVBoxLayout()
+        row1 = QHBoxLayout()
+        row2 = QHBoxLayout()
 
-        top_bar.addWidget(QLabel("Search:"))
+        # --- Row 1 ---
+        row1.addWidget(QLabel("Search:"))
         self.search_input = QLineEdit(self)
-        self.search_input.setPlaceholderText("Title, author, series, ISBN...")
+        cur_query = prefs.get("last_search_query", "")
+        if cur_query:
+            self.search_input.setText(cur_query)
         self.search_input.returnPressed.connect(self.start_search)
-        top_bar.addWidget(self.search_input, stretch=3)
+        self.search_input.textChanged.connect(self.save_all_field_preferences)
+        row1.addWidget(self.search_input, stretch=3)
 
-        # Search Field Selector
-        top_bar.addWidget(QLabel("Field:"))
+        row1.addWidget(QLabel("Field:"))
         self.field_combo = QComboBox(self)
         self.field_combo.addItems(list(SEARCH_FIELDS.keys()))
         cur_field = prefs.get("search_field", "All Fields")
         f_idx = self.field_combo.findText(cur_field)
         if f_idx >= 0:
             self.field_combo.setCurrentIndex(f_idx)
-        top_bar.addWidget(self.field_combo)
+        self.field_combo.currentTextChanged.connect(self.save_all_field_preferences)
+        row1.addWidget(self.field_combo)
 
-        # Language Selector
-        top_bar.addWidget(QLabel("Lang:"))
+        row1.addWidget(QLabel("Cat:"))
+        self.category_combo = QComboBox(self)
+        self.category_combo.addItems(list(CATEGORIES.keys()))
+        cur_cat = prefs.get("search_category", "All Categories")
+        c_idx = self.category_combo.findText(cur_cat)
+        if c_idx >= 0:
+            self.category_combo.setCurrentIndex(c_idx)
+        self.category_combo.currentTextChanged.connect(self.save_all_field_preferences)
+        row1.addWidget(self.category_combo)
+
+        self.search_btn = QPushButton("Search", self)
+        self.search_btn.setStyleSheet("font-weight: bold; background-color: #2b5b84; color: white; padding: 5px 12px;")
+        self.search_btn.clicked.connect(self.start_search)
+        row1.addWidget(self.search_btn)
+
+        self.stop_search_btn = QPushButton("Stop Search", self)
+        self.stop_search_btn.setStyleSheet("font-weight: bold; background-color: #8c2a2a; color: white; padding: 5px 12px;")
+        self.stop_search_btn.setVisible(False)
+        self.stop_search_btn.clicked.connect(self.stop_search)
+        row1.addWidget(self.stop_search_btn)
+
+        # --- Row 2 ---
+        row2.addWidget(QLabel("Lang:"))
         self.lang_combo = QComboBox(self)
         self.lang_combo.addItems(SUPPORTED_LANGUAGES)
         cur_lang = prefs.get("preferred_language", "English")
         l_idx = self.lang_combo.findText(cur_lang)
         if l_idx >= 0:
             self.lang_combo.setCurrentIndex(l_idx)
-        top_bar.addWidget(self.lang_combo)
+        self.lang_combo.currentTextChanged.connect(self.save_all_field_preferences)
+        row2.addWidget(self.lang_combo)
 
-        # Format Selector
-        top_bar.addWidget(QLabel("Format:"))
+        row2.addWidget(QLabel("Format:"))
         self.format_combo = QComboBox(self)
         self.format_combo.addItems(SUPPORTED_FORMATS)
         cur_fmt = prefs.get("preferred_format", "Any").upper()
         fmt_idx = self.format_combo.findText(cur_fmt)
         if fmt_idx >= 0:
             self.format_combo.setCurrentIndex(fmt_idx)
-        top_bar.addWidget(self.format_combo)
+        self.format_combo.currentTextChanged.connect(self.save_all_field_preferences)
+        row2.addWidget(self.format_combo)
 
-        # Mirror Selector
-        top_bar.addWidget(QLabel("Mirror:"))
+        row2.addWidget(QLabel("Mirror:"))
         self.mirror_combo = QComboBox(self)
         self.update_mirror_combobox()
-        top_bar.addWidget(self.mirror_combo)
+        self.mirror_combo.currentTextChanged.connect(self.save_all_field_preferences)
+        row2.addWidget(self.mirror_combo)
 
-        # Filter Mode (Strict vs Prioritize)
+        self.fetch_mirrors_btn = QPushButton("Fetch Live")
+        self.fetch_mirrors_btn.setToolTip("Fetch active mirrors from open-slum.org")
+        self.fetch_mirrors_btn.clicked.connect(self.manual_fetch_mirrors)
+        row2.addWidget(self.fetch_mirrors_btn)
+
         self.filter_combo = QComboBox(self)
         self.filter_combo.addItems(FILTER_MODES)
         cur_mode = prefs.get("filter_mode", "Prioritize")
         m_idx = self.filter_combo.findText(cur_mode)
         if m_idx >= 0:
             self.filter_combo.setCurrentIndex(m_idx)
-        top_bar.addWidget(self.filter_combo)
+        self.filter_combo.currentTextChanged.connect(self.save_all_field_preferences)
+        row2.addWidget(self.filter_combo)
 
-        self.search_btn = QPushButton("Search", self)
-        self.search_btn.setStyleSheet("font-weight: bold; background-color: #2b5b84; color: white; padding: 5px 12px;")
-        self.search_btn.clicked.connect(self.start_search)
-        top_bar.addWidget(self.search_btn)
+        row2.addWidget(QLabel("Max:"))
+        self.max_results_spinbox = QSpinBox(self)
+        self.max_results_spinbox.setRange(1, 1000)
+        self.max_results_spinbox.setValue(int(prefs.get("max_results", 5)))
+        self.max_results_spinbox.valueChanged.connect(self.save_all_field_preferences)
+        row2.addWidget(self.max_results_spinbox)
+        
+        row2.addStretch(1)
 
-        main_layout.addLayout(top_bar)
+        top_panel.addLayout(row1)
+        top_panel.addLayout(row2)
+        main_layout.addLayout(top_panel)
 
         # Tabs: Search Results, Bulk Queue, and Mirrors/Health
         self.tabs = QTabWidget(self)
+        self.tabs.currentChanged.connect(self.on_table_selection_changed)
 
         # --- Tab 1: Search Results ---
         tab_results = QWidget()
         results_layout = QVBoxLayout(tab_results)
 
+        # Inline Search Progress & Active Mirror Display
+        search_status_box = QHBoxLayout()
+        self.search_mirror_label = QLabel("Search status: Ready", self)
+        self.search_mirror_label.setStyleSheet("font-weight: bold; color: #2b5b84;")
+        search_status_box.addWidget(self.search_mirror_label, stretch=2)
+
+
+        results_layout.addLayout(search_status_box)
+
         self.results_table = QTableWidget(self)
-        self.results_table.setColumnCount(7)
+        self.results_table.setColumnCount(6)
         self.results_table.setHorizontalHeaderLabels([
-            "Select", "Title", "Author", "Publisher / Year", "Language", "Format", "Size"
+            "Title", "Author", "Publisher / Year", "Language", "Format", "Size"
         ])
-        self.results_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.results_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.results_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.results_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self.results_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        self.results_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        self.results_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        self.results_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        self.results_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)
         self.results_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.results_table.setSelectionMode(QTableWidget.SelectionMode.ExtendedSelection)
+        self.results_table.itemSelectionChanged.connect(self.on_table_selection_changed)
+        self.results_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.results_table.setSortingEnabled(True)
+        self.results_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.results_table.customContextMenuRequested.connect(self.show_results_context_menu)
         results_layout.addWidget(self.results_table)
+
+        # Global shortcut: Ctrl+Shift+A to add selected to bulk queue
+        self.queue_shortcut = QShortcut(QKeySequence("Ctrl+Shift+A"), self)
+        self.queue_shortcut.activated.connect(self.queue_selected_results)
 
         # Results Bottom Buttons
         btn_bar = QHBoxLayout()
@@ -291,15 +662,32 @@ class LibgenDialog(QDialog):
         queue_layout = QVBoxLayout(tab_queue)
 
         self.queue_table = QTableWidget(self)
-        self.queue_table.setColumnCount(5)
+        self.queue_table.setColumnCount(7)
         self.queue_table.setHorizontalHeaderLabels([
-            "Title", "Author", "Format", "Size", "Status"
+            "Title", "Author", "Format", "Size", "Status", "Speed", "Progress"
         ])
-        self.queue_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.queue_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.queue_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.queue_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self.queue_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        self.queue_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        self.queue_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        self.queue_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        self.queue_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)
+        self.queue_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)
         self.queue_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.queue_table.itemSelectionChanged.connect(self.on_table_selection_changed)
         queue_layout.addWidget(self.queue_table)
+
+        # Scrolling Live Activity Log
+        queue_layout.addWidget(QLabel("Live Download & Mirror Failover Activity:"))
+        self.log_view = QPlainTextEdit(self)
+        self.log_view.setReadOnly(True)
+        self.log_view.setMaximumBlockCount(400)
+        self.log_view.setFixedHeight(120)
+        self.log_view.setStyleSheet(
+            "background-color: #181818; color: #4af626; font-family: monospace; font-size: 11px; padding: 6px; border: 1px solid #333; border-radius: 4px;"
+        )
+        self.log_view.setPlaceholderText("Live download events, mirror failovers, and streaming chunks will appear here...")
+        queue_layout.addWidget(self.log_view)
 
         # Queue Bottom Buttons
         queue_btn_bar = QHBoxLayout()
@@ -311,7 +699,22 @@ class LibgenDialog(QDialog):
         self.clear_queue_btn.clicked.connect(self.clear_queue)
         queue_btn_bar.addWidget(self.clear_queue_btn)
 
+        self.retry_failed_btn = QPushButton("Retry Failed", self)
+        self.retry_failed_btn.setStyleSheet("font-weight: bold; padding: 6px 14px;")
+        self.retry_failed_btn.clicked.connect(self.retry_failed_downloads)
+        queue_btn_bar.addWidget(self.retry_failed_btn)
+
+        self.auto_retry_checkbox = QCheckBox("Retry until all articles are downloaded", self)
+        self.auto_retry_checkbox.setChecked(False)
+        queue_btn_bar.addWidget(self.auto_retry_checkbox)
+
         queue_btn_bar.addStretch()
+
+        self.stop_download_btn = QPushButton("Stop Download", self)
+        self.stop_download_btn.setStyleSheet("font-weight: bold; background-color: #8c2a2a; color: white; padding: 6px 14px;")
+        self.stop_download_btn.setVisible(False)
+        self.stop_download_btn.clicked.connect(self.stop_bulk_download)
+        queue_btn_bar.addWidget(self.stop_download_btn)
 
         self.start_download_btn = QPushButton("Start Bulk Download", self)
         self.start_download_btn.setStyleSheet("font-weight: bold; background-color: #2b5b84; color: white; padding: 6px 14px;")
@@ -320,6 +723,7 @@ class LibgenDialog(QDialog):
 
         queue_layout.addLayout(queue_btn_bar)
         self.tabs.addTab(tab_queue, "Bulk Queue (0)")
+
 
         # --- Tab 3: Mirrors & Health ---
         tab_mirrors = QWidget()
@@ -331,12 +735,12 @@ class LibgenDialog(QDialog):
         self.mirrors_table.setHorizontalHeaderLabels([
             "Mirror URL", "Status", "Latency", "Speed", "Type", "Action"
         ])
-        self.mirrors_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.mirrors_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.mirrors_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.mirrors_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        self.mirrors_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self.mirrors_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self.mirrors_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self.mirrors_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        self.mirrors_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        self.mirrors_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        self.mirrors_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        self.mirrors_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)
         self.mirrors_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         mirrors_layout.addWidget(self.mirrors_table)
 
@@ -380,15 +784,51 @@ class LibgenDialog(QDialog):
         self.status_label = QLabel("Ready", self)
         status_bar.addWidget(self.status_label, stretch=2)
 
-        self.progress_bar = QProgressBar(self)
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.progress_bar.setTextVisible(True)
-        self.progress_bar.setFixedWidth(260)
-        status_bar.addWidget(self.progress_bar)
+
+
+        # ASCII Cat (Neko) Animation Label
+        self.neko_label = QLabel("(=^.^=)zZ", self)
+        self.neko_label.setFixedWidth(85)
+        self.neko_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.neko_label.setStyleSheet("font-family: monospace; font-weight: bold; font-size: 13px; color: #d35400;")
+        status_bar.addWidget(self.neko_label)
+
+        self.neko_timer = QTimer(self)
+        self.neko_timer.timeout.connect(self.update_neko_animation)
+        self.neko_frame_idx = 0
+        self.neko_timer.start(400)
 
         main_layout.addLayout(status_bar)
+    def manual_fetch_mirrors(self):
+        self.fetch_mirrors_btn.setEnabled(False)
+        self.fetch_mirrors_btn.setText("Fetching...")
+        
+        self.live_mirror_worker = LiveMirrorWorker(parent=self)
+        self.live_mirror_worker.mirrors_discovered.connect(self.on_manual_mirrors_discovered)
+        self.live_mirror_worker.start()
 
+    def on_manual_mirrors_discovered(self, live_mirrors):
+        self.fetch_mirrors_btn.setEnabled(True)
+        self.fetch_mirrors_btn.setText("Fetch Live")
+        
+        if live_mirrors:
+            fallback_str = prefs.get("fallback_mirrors", "")
+            fallbacks = [m.strip().rstrip("/") for m in fallback_str.split(",") if m.strip()]
+            added = False
+            for m in live_mirrors:
+                if m not in fallbacks:
+                    fallbacks.append(m)
+                    added = True
+            
+            if added:
+                prefs["fallback_mirrors"] = ", ".join(fallbacks)
+                self.update_mirror_combobox()
+                self.populate_mirrors_table()
+                QMessageBox.information(self, "Mirrors Found", f"Successfully fetched and added new active mirrors from open-slum.org!")
+            else:
+                QMessageBox.information(self, "Mirrors Found", "Fetched live mirrors, but you already have them all in your configuration.")
+        else:
+            QMessageBox.warning(self, "Fetch Failed", "Could not fetch live mirrors or none were found active.")
     def update_mirror_combobox(self):
         self.mirror_combo.clear()
         self.mirror_combo.addItem("Auto (Failover)")
@@ -400,15 +840,92 @@ class LibgenDialog(QDialog):
         if idx >= 0:
             self.mirror_combo.setCurrentIndex(idx)
 
+    def update_neko_animation(self):
+        is_active = False
+        if hasattr(self, 'search_worker') and self.search_worker and self.search_worker.isRunning():
+            is_active = True
+        if hasattr(self, 'download_worker') and self.download_worker and self.download_worker.isRunning():
+            is_active = True
+            
+        status_text = self.status_label.text().lower()
+        is_error = "error" in status_text or "failed" in status_text or "aborted" in status_text
+            
+        if is_active:
+            frames = ["(=O.O=) _/", "(=O.O=) _|", "(=O.O=) _~", "(=O.O=) _|"]
+        elif is_error:
+            frames = ["(=>_<=) !!", "(=>_<=)   "]
+        else:
+            frames = ["(=^.^=) zZ", "(=^.^=)  z", "(=^.^=)   ", "(=^.^=)zZ "]
+
+        if not hasattr(self, 'neko_frame_idx'):
+            self.neko_frame_idx = 0
+            
+        self.neko_frame_idx = (self.neko_frame_idx + 1) % max(len(frames), 10)
+        
+        if hasattr(self, 'neko_label'):
+            self.neko_label.setText(frames[self.neko_frame_idx % len(frames)])
+            
+        if hasattr(self, 'search_worker') and self.search_worker and self.search_worker.isRunning():
+            spinners = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+            spin_idx = self.neko_frame_idx % len(spinners)
+            base_text = self.search_mirror_label.text()
+            if len(base_text) > 2 and base_text[0] in spinners:
+                base_text = base_text[2:]
+            self.search_mirror_label.setText(f"{spinners[spin_idx]} {base_text}")
+
+
+    # --- Cover Preview Handlers ---
+    def on_table_selection_changed(self):
+        # Determine which table triggered this if we want, or just check the active tab
+        idx = self.tabs.currentIndex()
+        book = None
+        if idx == 0:
+            rows = self.get_selected_result_rows()
+            if rows:
+                book = self.search_results[rows[0]]
+        elif idx == 1:
+            rows = sorted([item.row() for item in self.queue_table.selectedItems()])
+            if rows:
+                row = rows[0]
+                if row < len(self.queue_items):
+                    book = self.queue_items[row]["book"]
+        
+        if book and getattr(book, "detail_url", None):
+            self.cover_label.setText("Loading preview...")
+            self.cover_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444; color: #a5d6ff;")
+            if hasattr(self, 'cover_worker') and self.cover_worker and self.cover_worker.isRunning():
+                self.cover_worker.abort()
+            self.cover_worker = CoverFetchWorker(book.detail_url, parent=self)
+            self.cover_worker.cover_fetched.connect(self.on_cover_fetched)
+            self.cover_worker.start()
+        else:
+            self.cover_label.clear()
+            self.cover_label.setText("No Selection")
+            self.cover_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444; color: #888;")
+
+    def on_cover_fetched(self, pixmap):
+        scaled_pixmap = pixmap.scaled(
+            self.cover_label.size(), 
+            Qt.AspectRatioMode.KeepAspectRatio, 
+            Qt.TransformationMode.SmoothTransformation
+        )
+        self.cover_label.setPixmap(scaled_pixmap)
+
     # --- Search Handlers ---
     def start_search(self):
         query = self.search_input.text().strip()
         if not query:
             return
 
-        self.search_btn.setEnabled(False)
+        self.search_btn.setVisible(False)
+        self.stop_search_btn.setVisible(True)
+        self.stop_search_btn.setEnabled(True)
+        self.stop_search_btn.setText("Stop Search")
+
+
+
         self.status_label.setText(f"Searching LibGen for '{query}'...")
-        self.progress_bar.setRange(0, 0)  # Indeterminate spinner
+        self.search_mirror_label.setText(f"Connecting to LibGen mirrors for '{query}'...")
 
         # Update saved preferences
         field_text = self.field_combo.currentText().strip()
@@ -423,74 +940,132 @@ class LibgenDialog(QDialog):
         prefs["preferred_format"] = self.format_combo.currentText().strip()
         prefs["filter_mode"] = self.filter_combo.currentText().strip()
 
+        cat_text = self.category_combo.currentText().strip()
+        cat_code = CATEGORIES.get(cat_text, "")
+        prefs["search_category"] = cat_text
+
         self.search_worker = SearchWorker(
             query=query,
             search_field=field_code,
+            category=cat_code,
             selected_mirror=selected_mirror,
             language=self.lang_combo.currentText().strip(),
             fmt=self.format_combo.currentText().strip(),
             filter_mode=self.filter_combo.currentText().strip(),
+            max_results=self.max_results_spinbox.value(),
             parent=self,
         )
+        self.search_worker.progress_signal.connect(self.on_search_progress)
         self.search_worker.finished_signal.connect(self.on_search_finished)
         self.search_worker.error_signal.connect(self.on_search_error)
         self.search_worker.start()
 
-    def on_search_finished(self, books):
-        self.search_results = books
+    def stop_search(self):
+        if hasattr(self, "search_worker") and self.search_worker and self.search_worker.isRunning():
+            self.stop_search_btn.setEnabled(False)
+            self.stop_search_btn.setText("Stopping...")
+            self.status_label.setText("Search stopped by user.")
+            self.search_mirror_label.setText("Search stopped by user.")
+            self.search_worker.abort()
+        self.stop_search_btn.setVisible(False)
+        self.search_btn.setVisible(True)
         self.search_btn.setEnabled(True)
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        self.status_label.setText(f"Found {len(books)} books.")
+
+    def on_search_progress(self, idx, total, mirror):
+        from urllib.parse import urlparse
+        host = urlparse(mirror).netloc or mirror
+        percent = int(((idx - 1) / total) * 100) if total > 0 else 0
+        fmt_text = f"Mirror {idx}/{total} ({percent}%)"
+
+
+
+        msg = f"Querying mirror [{idx}/{total}]: {host} ({mirror})"
+        self.status_label.setText(msg)
+        self.status_label.setToolTip(mirror)
+        self.search_mirror_label.setText(msg)
+
+    def on_search_finished(self, books, mirror_used=""):
+        self.search_results = books
+        self.search_btn.setVisible(True)
+        self.search_btn.setEnabled(True)
+        self.stop_search_btn.setVisible(False)
+
+
+        from urllib.parse import urlparse
+        host = urlparse(mirror_used).netloc if mirror_used else "mirror"
+        success_text = f"✓ Found {len(books)} books via {host}." if mirror_used else f"✓ Found {len(books)} books."
+        self.status_label.setText(success_text)
+        self.search_mirror_label.setText(success_text)
         self.tabs.setTabText(0, f"Search Results ({len(books)})")
         self.tabs.setCurrentIndex(0)
         self.populate_results_table()
 
     def on_search_error(self, err_msg):
+        self.search_btn.setVisible(True)
         self.search_btn.setEnabled(True)
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
+        self.stop_search_btn.setVisible(False)
+
+
         self.status_label.setText(f"Search failed: {err_msg}")
+        self.search_mirror_label.setText(f"Search failed: {err_msg}")
         QMessageBox.warning(self, "Search Error", f"Failed to search LibGen mirrors:\n{err_msg}")
 
     def populate_results_table(self):
+        self.results_table.setSortingEnabled(False)
         self.results_table.setRowCount(0)
         for row, book in enumerate(self.search_results):
             self.results_table.insertRow(row)
-
-            # Checkbox item
-            cb_item = QTableWidgetItem()
-            cb_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
-            cb_item.setCheckState(Qt.CheckState.Unchecked)
-            self.results_table.setItem(row, 0, cb_item)
-
-            # Text items
-            self.results_table.setItem(row, 1, QTableWidgetItem(book.title))
-            self.results_table.setItem(row, 2, QTableWidgetItem(book.author))
+            title_item = QTableWidgetItem(book.title)
+            title_item.setData(Qt.ItemDataRole.UserRole, row)  # Store original index
+            self.results_table.setItem(row, 0, title_item)
+            self.results_table.setItem(row, 1, QTableWidgetItem(book.author))
             pub_year = f"{book.publisher} ({book.year})".strip(" ()")
-            self.results_table.setItem(row, 3, QTableWidgetItem(pub_year))
-            self.results_table.setItem(row, 4, QTableWidgetItem(book.language))
-            self.results_table.setItem(row, 5, QTableWidgetItem(book.extension))
-            self.results_table.setItem(row, 6, QTableWidgetItem(book.size))
+            self.results_table.setItem(row, 2, QTableWidgetItem(pub_year))
+            self.results_table.setItem(row, 3, QTableWidgetItem(book.language))
+            self.results_table.setItem(row, 4, QTableWidgetItem(book.extension))
+            self.results_table.setItem(row, 5, SizeTableWidgetItem(book.size))
+        self.results_table.setSortingEnabled(True)
 
     def select_all_results(self):
-        for r in range(self.results_table.rowCount()):
-            item = self.results_table.item(r, 0)
-            if item:
-                item.setCheckState(Qt.CheckState.Checked)
+        self.results_table.selectAll()
 
     def deselect_all_results(self):
-        for r in range(self.results_table.rowCount()):
-            item = self.results_table.item(r, 0)
-            if item:
-                item.setCheckState(Qt.CheckState.Unchecked)
+        self.results_table.clearSelection()
+
+    def get_selected_result_rows(self):
+        # Extract the original index from UserRole instead of using the sorted row index
+        selected_rows = set()
+        for idx in self.results_table.selectedIndexes():
+            item = self.results_table.item(idx.row(), 0)
+            if item is not None:
+                orig_idx = item.data(Qt.ItemDataRole.UserRole)
+                if orig_idx is not None:
+                    selected_rows.add(orig_idx)
+        return sorted(list(selected_rows))
+
+    def show_results_context_menu(self, pos):
+        selected_rows = self.get_selected_result_rows()
+        if not selected_rows:
+            return
+
+        menu = QMenu(self)
+        count = len(selected_rows)
+        add_act = menu.addAction(f"Add Selected ({count}) to Bulk Queue\tCtrl+Shift+A")
+        add_act.triggered.connect(self.queue_selected_results)
+        dl_act = menu.addAction(f"Download Selected ({count}) Now")
+        dl_act.triggered.connect(self.download_selected_now)
+        menu.exec(self.results_table.viewport().mapToGlobal(pos))
 
     # --- Queue Handlers ---
     def queue_selected_results(self):
+        selected_rows = self.get_selected_result_rows()
+        if not selected_rows:
+            QMessageBox.information(self, "No Items Selected", "Please select one or more books in the results table.")
+            return
+
         added_count = 0
-        for r in range(self.results_table.rowCount()):
-            item = self.results_table.item(r, 0)
-            if item and item.checkState() == Qt.CheckState.Checked:
+        for r in selected_rows:
+            if r < len(self.search_results):
                 book = self.search_results[r]
                 # Avoid duplicates in queue
                 if not any(q["book"].detail_url == book.detail_url for q in self.queue_items):
@@ -499,14 +1074,16 @@ class LibgenDialog(QDialog):
                         "status": "Queued",
                     })
                     added_count += 1
-                item.setCheckState(Qt.CheckState.Unchecked)
 
+        self.update_queue_table()
         if added_count > 0:
-            self.update_queue_table()
-            self.status_label.setText(f"Added {added_count} book(s) to download queue.")
-            self.tabs.setCurrentIndex(1)
+            self.status_label.setText(f"Added {added_count} book(s) to Bulk Queue.")
         else:
-            QMessageBox.information(self, "No Items Selected", "Please check at least one book to add to queue.")
+            self.status_label.setText("Selected book(s) already in Bulk Queue.")
+
+        # Retain focus directly in the search input
+        self.search_input.setFocus()
+        self.search_input.selectAll()
 
     def download_selected_now(self):
         self.queue_selected_results()
@@ -522,6 +1099,11 @@ class LibgenDialog(QDialog):
             self.queue_table.setItem(row, 2, QTableWidgetItem(book.extension))
             self.queue_table.setItem(row, 3, QTableWidgetItem(book.size))
             self.queue_table.setItem(row, 4, QTableWidgetItem(q.get("status", "Queued")))
+            self.queue_table.setItem(row, 5, QTableWidgetItem(""))
+            pct = q.get("progress", 0)
+            filled = pct // 10
+            ascii_bar = "█" * filled + "░" * (10 - filled)
+            self.queue_table.setItem(row, 6, QTableWidgetItem(f"[{ascii_bar}] {pct}%"))
 
         self.tabs.setTabText(1, f"Bulk Queue ({len(self.queue_items)})")
 
@@ -583,23 +1165,38 @@ class LibgenDialog(QDialog):
         mirrors = get_mirrors()
         self.test_all_mirrors_btn.setEnabled(False)
         self.status_label.setText("Testing latency and download bandwidth for all LibGen mirrors...")
-        self.progress_bar.setRange(0, len(mirrors))
-        self.progress_bar.setValue(0)
 
         self.health_worker = MirrorHealthWorker(mirrors, parent=self)
+        self.health_worker.mirrors_discovered.connect(self.on_mirrors_discovered)
         self.health_worker.mirror_tested.connect(self.on_mirror_tested)
         self.health_worker.all_tested.connect(self.on_all_mirrors_tested)
         self.health_worker.start()
 
+    def on_mirrors_discovered(self, live_mirrors):
+        fallback_str = prefs.get("fallback_mirrors", "")
+        fallbacks = [m.strip().rstrip("/") for m in fallback_str.split(",") if m.strip()]
+        added = False
+        for m in live_mirrors:
+            if m not in fallbacks:
+                fallbacks.append(m)
+                added = True
+        
+        if added:
+            prefs["fallback_mirrors"] = ", ".join(fallbacks)
+            self.populate_mirrors_table()
+
     def on_mirror_tested(self, url, is_ok, ms, kb_s, speed_str, msg):
         self.mirror_health[url] = (is_ok, ms, kb_s, speed_str, msg)
-        self.progress_bar.setValue(self.progress_bar.value() + 1)
         self.populate_mirrors_table()
+        
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc or url
+        status = "OK" if is_ok else "FAIL"
+        speed = f"{speed_str}" if is_ok else ""
+        self.side_mirror_status.appendPlainText(f"[{status}] {host} {speed}")
 
     def on_all_mirrors_tested(self):
         self.test_all_mirrors_btn.setEnabled(True)
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(100)
         self.status_label.setText("Mirror speed and latency testing completed.")
 
     def sort_mirrors_by_speed(self):
@@ -669,74 +1266,262 @@ class LibgenDialog(QDialog):
         self.update_mirror_combobox()
         self.status_label.setText(f"Removed mirror: {url}")
 
+    def set_search_query(self, query, field="Author", reset_filters_to_default=True):
+        """Pre-fills search query, sets field dropdown to Author, and resets other filters to defaults."""
+        self.search_input.setText(query)
+        idx = self.field_combo.findText(field)
+        if idx >= 0:
+            self.field_combo.setCurrentIndex(idx)
+
+        if reset_filters_to_default:
+            l_idx = self.lang_combo.findText("Any")
+            if l_idx >= 0:
+                self.lang_combo.setCurrentIndex(l_idx)
+
+            fmt_idx = self.format_combo.findText("Any")
+            if fmt_idx >= 0:
+                self.format_combo.setCurrentIndex(fmt_idx)
+
+            m_idx = self.mirror_combo.findText("Auto (Failover)")
+            if m_idx >= 0:
+                self.mirror_combo.setCurrentIndex(m_idx)
+
+            fil_idx = self.filter_combo.findText("Prioritize")
+            if fil_idx >= 0:
+                self.filter_combo.setCurrentIndex(fil_idx)
+
+            c_idx = self.category_combo.findText("All Categories")
+            if c_idx >= 0:
+                self.category_combo.setCurrentIndex(c_idx)
+
+        if query:
+            self.start_search()
+
+
+    def append_log(self, text):
+        """Appends a timestamped message to the scrolling activity log and auto-scrolls to bottom."""
+        if hasattr(self, "log_view") and self.log_view is not None:
+            self.log_view.appendPlainText(text)
+            self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
+
+    def retry_failed_downloads(self):
+        """Finds all failed books in the queue and restarts bulk download with multi-mirror failover."""
+        failed_indices = []
+        for idx, item in enumerate(self.queue_items):
+            status = item.get("status", "").lower()
+            if "fail" in status or status == "failed":
+                item["status"] = "Queued"
+                self.queue_table.setItem(idx, 4, QTableWidgetItem("Queued"))
+                failed_indices.append(idx)
+
+        if not failed_indices:
+            QMessageBox.information(self, "No Failed Downloads", "There are no failed items in the queue to retry.")
+            return
+
+        self.append_log(f"🔄 Retrying {len(failed_indices)} failed book(s) with multi-mirror failover...")
+        self.start_bulk_download()
+
     # --- Bulk Download Handlers ---
     def start_bulk_download(self):
+        if hasattr(self, 'download_worker') and self.download_worker and self.download_worker.isRunning():
+            QMessageBox.warning(self, "Download in Progress", "A download is already running. Please wait or stop it first.")
+            return
+        
+        import time
+        self.bulk_start_time = time.time()
+
         pending = [q for q in self.queue_items if q.get("status") != "✓ Added to Library"]
         if not pending:
             QMessageBox.information(self, "Queue Empty", "No pending books in download queue.")
             return
 
-        self.start_download_btn.setEnabled(False)
+        self.start_download_btn.setVisible(False)
+        self.stop_download_btn.setVisible(True)
+        self.stop_download_btn.setEnabled(True)
+        self.stop_download_btn.setText("Stop Download")
         self.status_label.setText(f"Starting bulk download of {len(pending)} books...")
-        self.progress_bar.setValue(0)
+        self.append_log(f"--- Starting Bulk Download: {len(pending)} pending item(s) ---")
 
-        self.download_worker = BulkDownloadWorker(self.queue_items, parent=self)
+        do_auto_retry = False
+        if hasattr(self, 'auto_retry_checkbox'):
+            do_auto_retry = self.auto_retry_checkbox.isChecked()
+
+        self.download_worker = BulkDownloadWorker(self.queue_items, auto_retry=do_auto_retry, parent=self)
         self.download_worker.item_status.connect(self.on_item_status)
         self.download_worker.item_progress.connect(self.on_item_progress)
-        self.download_worker.book_downloaded.connect(self.on_book_downloaded)
+        self.download_worker.log_message.connect(self.append_log)
+        self.download_worker.link_trying.connect(self.on_link_trying)
         self.download_worker.all_done.connect(self.on_bulk_all_done)
         self.download_worker.start()
+
+    def stop_bulk_download(self):
+        if self.download_worker and self.download_worker.isRunning():
+            self.stop_download_btn.setEnabled(False)
+            self.stop_download_btn.setText("Stopping...")
+            self.status_label.setText("Stopping downloads...")
+            self.append_log("⚠ Download stop requested by user. Aborting...")
+            self.download_worker.abort()
+        else:
+            self.stop_download_btn.setVisible(False)
+            self.stop_download_btn.setText("Stop Download")
+            self.stop_download_btn.setEnabled(True)
+            self.start_download_btn.setVisible(True)
+            self.start_download_btn.setEnabled(True)
+
+    def on_link_trying(self, idx, url, stage):
+        from urllib.parse import urlparse
+        host = urlparse(url).netloc or url
+        if stage == "resolving":
+            status_text = f"Resolving ({host})..."
+        elif stage == "segmented":
+            status_text = f"Piece-together ({host})..."
+        else:
+            status_text = f"Streaming ({host})..."
+
+        if idx < len(self.queue_items):
+            self.queue_items[idx]["status"] = status_text
+            self.queue_table.setItem(idx, 4, QTableWidgetItem(status_text))
+        
+        # Optionally log it to the side panel if it's establishing a stream
+        if stage == "streaming" or stage == "segmented":
+            self.side_mirror_status.appendPlainText(f"[CONN] {host}")
 
     def on_item_status(self, idx, status_text):
         if idx < len(self.queue_items):
             self.queue_items[idx]["status"] = status_text
             self.queue_table.setItem(idx, 4, QTableWidgetItem(status_text))
-            self.status_label.setText(f"[{idx + 1}/{len(self.queue_items)}] {status_text}")
+            downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
+            self.status_label.setText(f"{downloaded}/{len(self.queue_items)} downloaded")
 
-    def on_item_progress(self, idx, bytes_read, total_bytes):
+    def on_item_progress(self, idx, bytes_read, total_bytes, speed_kb):
         if total_bytes > 0:
             percent = int((bytes_read / total_bytes) * 100)
-            self.progress_bar.setValue(percent)
-            book_title = self.queue_items[idx]["book"].title[:30]
-            self.status_label.setText(
-                f"[{idx + 1}/{len(self.queue_items)}] {book_title}... ({bytes_read // 1024} KB / {total_bytes // 1024} KB)"
-            )
+            if idx < len(self.queue_items):
+                self.queue_items[idx]["progress"] = percent
+                filled = percent // 10
+                ascii_bar = "█" * filled + "░" * (10 - filled)
+                self.queue_table.setItem(idx, 6, QTableWidgetItem(f"[{ascii_bar}] {percent}%"))
+                self.queue_table.setItem(idx, 5, QTableWidgetItem(f"{speed_kb:.1f} KB/s"))
+            
+            downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
+            self.status_label.setText(f"{downloaded}/{len(self.queue_items)} downloaded")
 
-    def on_book_downloaded(self, idx, file_path):
-        """Directly import downloaded book into Calibre library."""
+    def import_books_to_library(self, file_paths):
+        """Batch import downloaded books into Calibre library."""
+        if not file_paths:
+            return
         try:
             if hasattr(self.gui, "iactions") and "Add Books" in self.gui.iactions:
                 add_action = self.gui.iactions["Add Books"]
                 if hasattr(add_action, "_add_books"):
-                    add_action._add_books([file_path], False)
+                    add_action._add_books(file_paths, False)
                 elif hasattr(add_action, "add_books"):
-                    add_action.add_books([file_path])
+                    add_action.add_books(file_paths)
             else:
                 from calibre.gui2.add import Adder
-                Adder([file_path], db=self.gui.current_db, parent=self.gui)
+                Adder(file_paths, db=self.gui.current_db, parent=self.gui)
         except Exception as e:
-            print(f"[LibGen Plugin] Failed to auto-import {file_path}: {e}")
+            print(f"[LibGen Plugin] Failed to auto-import books: {e}")
 
-    def on_bulk_all_done(self, success_count, fail_count):
+    def on_bulk_all_done(self, downloaded_items, fail_count, is_aborted):
+        self.stop_download_btn.setVisible(False)
+        self.stop_download_btn.setText("Stop Download")
+        self.stop_download_btn.setEnabled(True)
+        self.start_download_btn.setVisible(True)
         self.start_download_btn.setEnabled(True)
-        self.progress_bar.setValue(100)
-        msg = f"Bulk download completed!\nSuccessfully added to library: {success_count}\nFailed: {fail_count}"
-        self.status_label.setText(f"Done: {success_count} added, {fail_count} failed.")
-        QMessageBox.information(self, "Download Complete", msg)
+
+        import time
+        elapsed = 0
+        if hasattr(self, 'bulk_start_time'):
+            elapsed = int(time.time() - self.bulk_start_time)
+
+        summary_msg = f"Time taken: {elapsed} seconds\nDownloaded: {len(downloaded_items)}\nFailed: {fail_count}"
+
+        if not downloaded_items:
+            if is_aborted:
+                self.status_label.setText("Download aborted. No books downloaded.")
+                QMessageBox.information(self, "Download Aborted", f"Downloads were stopped. No books were downloaded.\n\n{summary_msg}")
+            else:
+                self.status_label.setText(f"Download failed: {fail_count} book(s) failed.")
+                QMessageBox.warning(self, "Download Failed", f"All downloads failed ({fail_count} failed).\n\n{summary_msg}")
+            return
+
+        self.status_label.setText(f"Downloaded {len(downloaded_items)} book(s). Reviewing for import...")
+        QMessageBox.information(self, "Bulk Download Summary", f"Download queue finished.\n\n{summary_msg}")
+
+        # Present Review modal dialog to user
+        review_dlg = ReviewImportDialog(downloaded_items, is_aborted=is_aborted, parent=self)
+        if review_dlg.exec() == QDialog.DialogCode.Accepted and review_dlg.approved_items:
+            approved = review_dlg.approved_items
+            file_paths = [it["file_path"] for it in approved]
+            self.import_books_to_library(file_paths)
+
+            approved_indices = set(it["index"] for it in approved)
+            for it in downloaded_items:
+                idx = it["index"]
+                if idx in approved_indices:
+                    self.queue_items[idx]["status"] = "✓ Added to Library"
+                    self.queue_table.setItem(idx, 4, QTableWidgetItem("✓ Added to Library"))
+                else:
+                    self.queue_items[idx]["status"] = "Downloaded (Not Imported)"
+                    self.queue_table.setItem(idx, 4, QTableWidgetItem("Downloaded (Not Imported)"))
+
+            self.status_label.setText(f"Successfully added {len(approved)} book(s) to Calibre library.")
+            QMessageBox.information(
+                self,
+                "Import Complete",
+                f"Successfully added {len(approved)} book(s) into your Calibre library."
+            )
+        else:
+            for it in downloaded_items:
+                idx = it["index"]
+                self.queue_items[idx]["status"] = "Downloaded (Not Imported)"
+                self.queue_table.setItem(idx, 4, QTableWidgetItem("Downloaded (Not Imported)"))
+            self.status_label.setText("Import skipped. Downloaded books held in queue.")
+
+    def save_all_field_preferences(self, *args):
+        """Starts a debounce timer to persist preferences without spamming disk I/O."""
+        if hasattr(self, "save_timer"):
+            self.save_timer.start()
+
+    def _do_save_all_field_preferences(self):
+        """Actually persists the current values to disk."""
+        if hasattr(self, "search_input"):
+            prefs["last_search_query"] = self.search_input.text().strip()
+        if hasattr(self, "field_combo"):
+            prefs["search_field"] = self.field_combo.currentText().strip()
+        if hasattr(self, "category_combo"):
+            prefs["search_category"] = self.category_combo.currentText().strip()
+        if hasattr(self, "lang_combo"):
+            prefs["preferred_language"] = self.lang_combo.currentText().strip()
+        if hasattr(self, "format_combo"):
+            prefs["preferred_format"] = self.format_combo.currentText().strip()
+        if hasattr(self, "filter_combo"):
+            prefs["filter_mode"] = self.filter_combo.currentText().strip()
+        if hasattr(self, "mirror_combo"):
+            m_text = self.mirror_combo.currentText().strip()
+            if m_text.startswith("Auto"):
+                m_text = "Auto"
+            prefs["selected_mirror"] = m_text
 
     def closeEvent(self, event):
+        self._do_save_all_field_preferences()
+        if hasattr(self, "search_worker") and self.search_worker and self.search_worker.isRunning():
+            self.search_worker.abort()
         if self.download_worker and self.download_worker.isRunning():
             reply = QMessageBox.question(
                 self,
                 "Download Running",
-                "Downloads are currently in progress. Cancel downloads and exit?",
+                "Downloads are in progress. Stop downloads and review completed books?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.Yes:
                 self.download_worker.abort()
+                self.download_worker.wait(3000)
                 event.accept()
             else:
                 event.ignore()
                 return
         event.accept()
+

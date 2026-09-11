@@ -23,13 +23,20 @@ prefs = JSONConfig("plugins/libgen_store")
 # Default preferences
 prefs.defaults["primary_mirror"] = "https://libgen.li"
 prefs.defaults["fallback_mirrors"] = (
-    "https://libgen.vg, https://libgen.gl, https://libgen.bz, https://libgen.la, https://libgen.is"
+    "https://libgen.rs, https://libgen.is, https://libgen.st, "
+    "https://libgen.vg, https://libgen.gl, https://libgen.bz, "
+    "https://libgen.gs, https://libgen.lc, https://libgen.la"
 )
 prefs.defaults["preferred_language"] = "English"
 prefs.defaults["preferred_format"] = "Any"
 prefs.defaults["custom_mirrors"] = []
 prefs.defaults["selected_mirror"] = "Auto"
 prefs.defaults["search_field"] = "All Fields"
+prefs.defaults["search_category"] = "All Categories"
+prefs.defaults["filter_mode"] = "Prioritize"
+prefs.defaults["last_search_query"] = ""
+prefs.defaults["last_successful_mirror"] = ""
+prefs.defaults["max_results"] = 5
 
 SEARCH_FIELDS = {
     "All Fields": "",
@@ -41,18 +48,39 @@ SEARCH_FIELDS = {
     "ISBN": "i",
 }
 
+CATEGORIES = {
+    "All Categories": "",
+    "Fiction": "f",
+    "Sci-Tech / Non-Fiction": "l",
+    "Scientific Articles / Papers": "a",
+    "Comics": "c",
+    "Magazines": "m",
+}
+
 def get_mirrors():
-    """Returns an ordered list of unique mirrors: primary, fallbacks, and user-added custom mirrors."""
+    """Returns an ordered list of unique mirrors. Prioritizes last_successful_mirror at the top."""
     primary = prefs.get("primary_mirror", "https://libgen.li").strip().rstrip("/")
     fallback_str = prefs.get("fallback_mirrors", "")
     fallbacks = [m.strip().rstrip("/") for m in fallback_str.split(",") if m.strip()]
     custom = [m.strip().rstrip("/") for m in prefs.get("custom_mirrors", []) if m.strip()]
 
     mirrors = []
+    last_succ = prefs.get("last_successful_mirror", "").strip().rstrip("/")
+    if last_succ:
+        mirrors.append(last_succ)
+
     for m in [primary] + fallbacks + custom:
         if m and m not in mirrors:
             mirrors.append(m)
     return mirrors
+
+def record_successful_mirror(mirror_url):
+    """Persists the specified mirror as the last successful mirror for next operations."""
+    if not mirror_url:
+        return
+    clean = mirror_url.strip().rstrip("/")
+    if clean:
+        prefs["last_successful_mirror"] = clean
 
 def add_custom_mirror(url):
     url = url.strip().rstrip("/")
@@ -178,8 +206,8 @@ class ConfigWidget(QWidget):
 
         # Max Results
         self.max_results_spin = QSpinBox(self)
-        self.max_results_spin.setRange(5, 100)
-        self.max_results_spin.setValue(int(prefs.get("max_results", 25)))
+        self.max_results_spin.setRange(1, 1000)
+        self.max_results_spin.setValue(int(prefs.get("max_results", 5)))
         filter_layout.addRow("Max Results per Search:", self.max_results_spin)
 
         self.layout.addWidget(filter_group)
