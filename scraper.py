@@ -231,6 +231,11 @@ class LibgenScraper:
                 if not title:
                     continue
 
+                cover_url = ""
+                img_node = r.find("img")
+                if img_node and img_node.get("src") and "blank.png" not in img_node["src"]:
+                    cover_url = urljoin(mirror, img_node["src"])
+
                 book = LibgenBook()
                 book.title = title
                 book.author = author
@@ -241,6 +246,7 @@ class LibgenScraper:
                 book.size = size
                 book.extension = extension
                 book.detail_url = detail_url
+                book.cover_url = cover_url
                 books.append(book)
 
         return books
