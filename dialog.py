@@ -165,8 +165,8 @@ class MirrorHealthWorker(QThread):
         self.all_tested.emit()
 
 class CoverFetchWorker(QThread):
-    cover_fetched = pyqtSignal(bytes)
-    cover_failed = pyqtSignal()
+    cover_fetched = pyqtSignal(bytes, str)
+    cover_failed = pyqtSignal(str)
 
     def __init__(self, book_or_detail_url, parent=None):
         super().__init__(parent)
@@ -190,18 +190,18 @@ class CoverFetchWorker(QThread):
                 from scraper import LibgenScraper
             except Exception:
                 if not self._is_aborted:
-                    self.cover_failed.emit()
+                    self.cover_failed.emit(self.detail_url)
                 return
 
         try:
-            scraper = LibgenScraper(timeout=6)
+            scraper = LibgenScraper(timeout=5)
             cover_url = getattr(self.book, "cover_url", "") if self.book else ""
 
             # 1. Resolve cover URL from detail page if not cached
             if not cover_url and self.detail_url:
                 if self._is_aborted:
                     return
-                _, cover_url = scraper.resolve_details(self.detail_url, timeout=5)
+                _, cover_url = scraper.resolve_details(self.detail_url, timeout=4)
 
                 if not cover_url:
                     fallbacks = scraper.get_fallback_detail_urls(self.detail_url)
@@ -210,7 +210,7 @@ class CoverFetchWorker(QThread):
                             return
                         if fb == self.detail_url:
                             continue
-                        _, cover_url = scraper.resolve_details(fb, timeout=4)
+                        _, cover_url = scraper.resolve_details(fb, timeout=3)
                         if cover_url:
                             break
 
@@ -218,16 +218,17 @@ class CoverFetchWorker(QThread):
                     self.book.cover_url = cover_url
 
             if self._is_aborted or not cover_url:
-                self.cover_failed.emit()
+                self.cover_failed.emit(self.detail_url)
                 return
 
-            # 2. Candidate cover image URLs (swapping domains for .la/.gl/.vg/.bz to .li)
-            img_candidates = [cover_url]
+            # 2. Candidate cover image URLs: libgen.li is primary reliable image host
+            img_candidates = []
             parsed = urlparse(cover_url)
             if any(ext in parsed.netloc for ext in [".la", ".gl", ".vg", ".bz"]):
                 li_url = cover_url.replace(parsed.netloc, "libgen.li")
-                if li_url not in img_candidates:
-                    img_candidates.append(li_url)
+                img_candidates.append(li_url)
+            if cover_url not in img_candidates:
+                img_candidates.append(cover_url)
 
             b = scraper._get_browser()
             data = None
@@ -238,7 +239,7 @@ class CoverFetchWorker(QThread):
                     u_parsed = urlparse(u)
                     referer = f"{u_parsed.scheme}://{u_parsed.netloc}/"
                     b.addheaders = [("User-Agent", scraper.USER_AGENT), ("Referer", referer)]
-                    resp = b.open(u, timeout=5)
+                    resp = b.open(u, timeout=4)
                     chunk = resp.read()
                     if chunk and len(chunk) > 300 and not chunk.startswith(b"<!DOCTYPE") and not chunk.startswith(b"<html"):
                         data = chunk
@@ -250,13 +251,13 @@ class CoverFetchWorker(QThread):
                 return
 
             if data:
-                self.cover_fetched.emit(data)
+                self.cover_fetched.emit(data, self.detail_url)
                 return
 
-            self.cover_failed.emit()
+            self.cover_failed.emit(self.detail_url)
         except Exception:
             if not self._is_aborted:
-                self.cover_failed.emit()
+                self.cover_failed.emit(self.detail_url)
 
 class LiveMirrorWorker(QThread):
     mirrors_discovered = pyqtSignal(list)
@@ -515,6 +516,13 @@ class LibgenDialog(QDialog):
         self.save_timer.setSingleShot(True)
         self.save_timer.setInterval(500)
         self.save_timer.timeout.connect(self._do_save_all_field_preferences)
+
+        # In-memory cover cache and text loading animation timer
+        self.cover_cache = {}
+        self.cover_anim_timer = QTimer(self)
+        self.cover_anim_timer.setInterval(110)
+        self.cover_anim_timer.timeout.connect(self.update_cover_animation)
+        self.cover_anim_frame = 0
 
         self._setup_ui()
         self.populate_mirrors_table()
@@ -945,21 +953,52 @@ class LibgenDialog(QDialog):
                     book = self.queue_items[row]["book"]
         
         if book and getattr(book, "detail_url", None):
-            self.cover_label.clear()
-            self.cover_label.setText("Loading preview...")
-            self.cover_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444; color: #a5d6ff;")
+            cache_key = book.detail_url or book.title
+            if cache_key in self.cover_cache:
+                if hasattr(self, 'cover_worker') and self.cover_worker and self.cover_worker.isRunning():
+                    self.cover_worker.abort()
+                self.cover_anim_timer.stop()
+                self._display_cover_pixmap(self.cover_cache[cache_key])
+                return
+
             if hasattr(self, 'cover_worker') and self.cover_worker and self.cover_worker.isRunning():
                 self.cover_worker.abort()
+
+            # Start smooth animated text loading indicator
+            self.cover_anim_frame = 0
+            self.cover_anim_timer.start(110)
+            self.update_cover_animation()
+
             self.cover_worker = CoverFetchWorker(book, parent=self)
             self.cover_worker.cover_fetched.connect(self.on_cover_fetched)
             self.cover_worker.cover_failed.connect(self.on_cover_failed)
             self.cover_worker.start()
         else:
+            if hasattr(self, 'cover_worker') and self.cover_worker and self.cover_worker.isRunning():
+                self.cover_worker.abort()
+            self.cover_anim_timer.stop()
             self.cover_label.clear()
-            self.cover_label.setText("No Selection")
-            self.cover_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444; color: #888;")
+            self.cover_label.setText('<div align="center" style="font-family: sans-serif;"><div style="font-size: 28px; margin-bottom: 6px; color: #444;">📚</div><div style="font-size: 12px; color: #666;">Select a book to preview</div></div>')
+            self.cover_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444;")
 
-    def on_cover_fetched(self, data):
+    def update_cover_animation(self):
+        spinners = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        dots = [".  ", ".. ", "...", "   "]
+        self.cover_anim_frame = getattr(self, 'cover_anim_frame', 0) + 1
+        spin = spinners[self.cover_anim_frame % len(spinners)]
+        dot = dots[(self.cover_anim_frame // 2) % len(dots)]
+
+        html = f"""
+        <div align="center" style="font-family: sans-serif;">
+            <div style="font-size: 30px; margin-bottom: 8px;">📖</div>
+            <div style="font-size: 13px; font-weight: bold; color: #a5d6ff;">Loading Cover{dot}</div>
+            <div style="font-size: 18px; color: #e67e22; margin-top: 10px; font-family: monospace;">{spin}</div>
+        </div>
+        """
+        self.cover_label.setText(html)
+        self.cover_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444;")
+
+    def _display_cover_pixmap(self, data):
         from qt.core import QPixmap
         pixmap = QPixmap()
         if pixmap.loadFromData(data):
@@ -968,15 +1007,38 @@ class LibgenDialog(QDialog):
                 Qt.AspectRatioMode.KeepAspectRatio, 
                 Qt.TransformationMode.SmoothTransformation
             )
+            self.cover_label.clear()
             self.cover_label.setPixmap(scaled_pixmap)
             self.cover_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444;")
         else:
-            self.on_cover_failed()
+            self.on_cover_failed("")
 
-    def on_cover_failed(self):
+    def on_cover_fetched(self, data, detail_url):
+        if detail_url:
+            self.cover_cache[detail_url] = data
+
+        # Check if the fetched cover still matches the currently selected book
+        idx = self.tabs.currentIndex()
+        curr_book = None
+        if idx == 0:
+            rows = self.get_selected_result_rows()
+            if rows:
+                curr_book = self.search_results[rows[0]]
+        elif idx == 1:
+            rows = sorted([item.row() for item in self.queue_table.selectedItems()])
+            if rows and rows[0] < len(self.queue_items):
+                curr_book = self.queue_items[rows[0]]["book"]
+
+        curr_url = getattr(curr_book, "detail_url", "")
+        if curr_url == detail_url or not curr_url:
+            self.cover_anim_timer.stop()
+            self._display_cover_pixmap(data)
+
+    def on_cover_failed(self, detail_url=""):
+        self.cover_anim_timer.stop()
         self.cover_label.clear()
-        self.cover_label.setText("No Cover Available")
-        self.cover_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444; color: #666;")
+        self.cover_label.setText('<div align="center" style="font-family: sans-serif;"><div style="font-size: 26px; margin-bottom: 6px; color: #555;">📁</div><div style="font-size: 12px; color: #777;">No Cover Available</div></div>')
+        self.cover_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444;")
 
     # --- Search Handlers ---
     def start_search(self):
