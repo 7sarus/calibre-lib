@@ -22,11 +22,25 @@ Search books directly across Library Genesis mirrors, lock or filter by language
   - Set preferred mirrors as Primary manually or automatically.
 - **Custom Mirrors**: Add, test, and persist your own custom LibGen mirror URLs directly from the UI.
 - **Bulk Download Queue**:
-  - Search books and select multiple titles using checkboxes.
-  - Add selections to the **Bulk Queue** tab.
-  - Download all queued books in sequence with live progress tracking.
+  - Multi-row selection using standard click, `Ctrl+Click`, `Shift+Click`, or `Ctrl+A`.
+  - Add to queue instantly with **`Ctrl+Shift+A`**, right-click **context menu**, or the bottom button.
+  - Seamless workflow: focus remains in the search bar to keep queueing without tab switching.
+  - Download all queued books in sequence with automatic **multi-mirror failover** across all active mirrors.
+  - **Live Scrolling Activity Log**: Monospace terminal log embedded in the queue tab showing real-time network events, mirror failovers, and chunk streaming progress.
+  - **Retry Failed Downloads**: One-click recovery button that re-queues and retries failed books against alternate mirrors.
   - Or click **Download Selected Now** for immediate one-click downloading.
-- **Direct Calibre Library Integration**: Downloaded books are automatically ingested by Calibre's native library adder (`Add Books`), automatically parsing book metadata and covers into your library without opening a web browser.
+- **Main Library Context Menu**: Right-click any book in Calibre's main library list to instantly **"Search LibGen for Author: <name>"**. Automatically launches search targeted to the Author field with clean filter resets.
+- **Controlled Library Ingestion & Review**:
+  - Downloads are decoupled into a sandbox directory and never forced into your Calibre library mid-stream.
+  - Upon download completion or user abort ("Stop Download"), an **Import Review Modal** appears.
+  - Review all downloaded files with options to **Import All**, **Import Selected**, or **Discard / Skip**.
+
+- **Category Filtering (Fiction vs Sci-Tech / Academic)**:
+  - Dedicated **Cat** selector: filter searches directly to **Fiction**, **Sci-Tech / Non-Fiction Books**, **Scientific Articles / Papers**, **Comics**, **Magazines**, or **All Categories**.
+  - Targets LibGen's native `topics[]` database partitions.
+- **Adaptive Working Mirror Memory**:
+  - Automatically remembers the last mirror that successfully completed a search or download.
+  - Prioritizes the proven working mirror first for all subsequent searches and download candidate URLs.
 - **Language & Format Locking**:
   - Filter or lock to a preferred language (English, Spanish, French, German, Russian, etc.).
   - Filter or lock to a preferred format (EPUB, PDF, MOBI, AZW3, DJVU, CBR, CBZ).
@@ -63,10 +77,12 @@ make install
 2. Click the **LibGen** button on the main toolbar (or press `Ctrl+Shift+L`).
 3. Type your search query and choose your preferred language and format.
 4. From the search results:
-   - Check the boxes for the books you want, then click **Add Selected to Bulk Queue**.
-   - Switch to the **Bulk Queue** tab and click **Start Bulk Download**.
+   - Select rows using click, `Ctrl+Click`, or `Shift+Click`.
+   - Press **`Ctrl+Shift+A`**, right-click and select **Add to Bulk Queue**, or click the bottom button. Focus automatically stays in the search box so you can keep searching and adding.
+   - When ready, switch to the **Bulk Queue** tab and click **Start Bulk Download**.
    - Or click **Download Selected Now** to immediately download and import.
 5. As books finish downloading, they will automatically appear in your Calibre library!
+
 
 ---
 
