@@ -165,44 +165,98 @@ class MirrorHealthWorker(QThread):
         self.all_tested.emit()
 
 class CoverFetchWorker(QThread):
-    cover_fetched = pyqtSignal(object)  # passing QPixmap as object to avoid import issues if not explicitly imported
+    cover_fetched = pyqtSignal(bytes)
+    cover_failed = pyqtSignal()
 
-    def __init__(self, detail_url, parent=None):
+    def __init__(self, book_or_detail_url, parent=None):
         super().__init__(parent)
-        self.detail_url = detail_url
+        if isinstance(book_or_detail_url, str):
+            self.detail_url = book_or_detail_url
+            self.book = None
+        else:
+            self.book = book_or_detail_url
+            self.detail_url = getattr(self.book, "detail_url", "")
         self._is_aborted = False
 
     def abort(self):
         self._is_aborted = True
 
     def run(self):
-        import urllib.request
-        import re
-        from urllib.parse import urljoin
-        from qt.core import QPixmap
+        from urllib.parse import urlparse
         try:
-            req = urllib.request.Request(self.detail_url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                if self._is_aborted: return
-                html = resp.read().decode("utf-8", errors="ignore")
-                match = re.search(r'<img[^>]+src="([^"]+cover[^"]+)"', html, re.IGNORECASE)
-                if not match:
-                    match = re.search(r'<img[^>]+src="([^"]+\.jpg)"', html, re.IGNORECASE)
-                if match:
-                    src = match.group(1)
-                    if not src.startswith("http"):
-                        src = urljoin(self.detail_url, src)
-                    
-                    if self._is_aborted: return
-                    img_req = urllib.request.Request(src, headers={"User-Agent": "Mozilla/5.0"})
-                    with urllib.request.urlopen(img_req, timeout=5) as img_resp:
-                        if self._is_aborted: return
-                        data = img_resp.read()
-                        pixmap = QPixmap()
-                        if pixmap.loadFromData(data):
-                            self.cover_fetched.emit(pixmap)
+            from calibre_plugins.libgen_store.scraper import LibgenScraper
         except Exception:
-            pass
+            try:
+                from scraper import LibgenScraper
+            except Exception:
+                if not self._is_aborted:
+                    self.cover_failed.emit()
+                return
+
+        try:
+            scraper = LibgenScraper(timeout=6)
+            cover_url = getattr(self.book, "cover_url", "") if self.book else ""
+
+            # 1. Resolve cover URL from detail page if not cached
+            if not cover_url and self.detail_url:
+                if self._is_aborted:
+                    return
+                _, cover_url = scraper.resolve_details(self.detail_url, timeout=5)
+
+                if not cover_url:
+                    fallbacks = scraper.get_fallback_detail_urls(self.detail_url)
+                    for fb in fallbacks:
+                        if self._is_aborted:
+                            return
+                        if fb == self.detail_url:
+                            continue
+                        _, cover_url = scraper.resolve_details(fb, timeout=4)
+                        if cover_url:
+                            break
+
+                if cover_url and self.book:
+                    self.book.cover_url = cover_url
+
+            if self._is_aborted or not cover_url:
+                self.cover_failed.emit()
+                return
+
+            # 2. Candidate cover image URLs (swapping domains for .la/.gl/.vg/.bz to .li)
+            img_candidates = [cover_url]
+            parsed = urlparse(cover_url)
+            if any(ext in parsed.netloc for ext in [".la", ".gl", ".vg", ".bz"]):
+                li_url = cover_url.replace(parsed.netloc, "libgen.li")
+                if li_url not in img_candidates:
+                    img_candidates.append(li_url)
+
+            b = scraper._get_browser()
+            data = None
+            for u in img_candidates:
+                if self._is_aborted:
+                    return
+                try:
+                    u_parsed = urlparse(u)
+                    referer = f"{u_parsed.scheme}://{u_parsed.netloc}/"
+                    b.addheaders = [("User-Agent", scraper.USER_AGENT), ("Referer", referer)]
+                    resp = b.open(u, timeout=5)
+                    chunk = resp.read()
+                    if chunk and len(chunk) > 300 and not chunk.startswith(b"<!DOCTYPE") and not chunk.startswith(b"<html"):
+                        data = chunk
+                        break
+                except Exception:
+                    continue
+
+            if self._is_aborted:
+                return
+
+            if data:
+                self.cover_fetched.emit(data)
+                return
+
+            self.cover_failed.emit()
+        except Exception:
+            if not self._is_aborted:
+                self.cover_failed.emit()
 
 class LiveMirrorWorker(QThread):
     mirrors_discovered = pyqtSignal(list)
@@ -481,7 +535,7 @@ class LibgenDialog(QDialog):
         self.cover_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.cover_label.setFixedSize(200, 300)
         self.cover_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444; color: #888;")
-        self.cover_label.setScaledContents(True)
+        self.cover_label.setScaledContents(False)
         right_layout.addWidget(self.cover_label)
 
         right_layout.addWidget(QLabel("<b>Live Mirror Status</b>"))
@@ -891,25 +945,38 @@ class LibgenDialog(QDialog):
                     book = self.queue_items[row]["book"]
         
         if book and getattr(book, "detail_url", None):
+            self.cover_label.clear()
             self.cover_label.setText("Loading preview...")
             self.cover_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444; color: #a5d6ff;")
             if hasattr(self, 'cover_worker') and self.cover_worker and self.cover_worker.isRunning():
                 self.cover_worker.abort()
-            self.cover_worker = CoverFetchWorker(book.detail_url, parent=self)
+            self.cover_worker = CoverFetchWorker(book, parent=self)
             self.cover_worker.cover_fetched.connect(self.on_cover_fetched)
+            self.cover_worker.cover_failed.connect(self.on_cover_failed)
             self.cover_worker.start()
         else:
             self.cover_label.clear()
             self.cover_label.setText("No Selection")
             self.cover_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444; color: #888;")
 
-    def on_cover_fetched(self, pixmap):
-        scaled_pixmap = pixmap.scaled(
-            self.cover_label.size(), 
-            Qt.AspectRatioMode.KeepAspectRatio, 
-            Qt.TransformationMode.SmoothTransformation
-        )
-        self.cover_label.setPixmap(scaled_pixmap)
+    def on_cover_fetched(self, data):
+        from qt.core import QPixmap
+        pixmap = QPixmap()
+        if pixmap.loadFromData(data):
+            scaled_pixmap = pixmap.scaled(
+                self.cover_label.size(), 
+                Qt.AspectRatioMode.KeepAspectRatio, 
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.cover_label.setPixmap(scaled_pixmap)
+            self.cover_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444;")
+        else:
+            self.on_cover_failed()
+
+    def on_cover_failed(self):
+        self.cover_label.clear()
+        self.cover_label.setText("No Cover Available")
+        self.cover_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444; color: #666;")
 
     # --- Search Handlers ---
     def start_search(self):
