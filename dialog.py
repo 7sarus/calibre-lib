@@ -53,6 +53,7 @@ from calibre_plugins.libgen_store.config import (
     set_mirror_order,
     add_custom_mirror,
     remove_custom_mirror,
+    PLUGIN_VERSION_STR,
 )
 from calibre_plugins.libgen_store.scraper import LibgenScraper
 
@@ -501,7 +502,7 @@ class LibgenDialog(QDialog):
     def __init__(self, gui, parent=None):
         super().__init__(parent or gui)
         self.gui = gui
-        self.setWindowTitle("LibGen Downloader")
+        self.setWindowTitle(f"LibGen Downloader ({PLUGIN_VERSION_STR})")
         self.resize(1020, 620)
 
         self.search_results = []
@@ -859,6 +860,11 @@ class LibgenDialog(QDialog):
         self.neko_timer.timeout.connect(self.update_neko_animation)
         self.neko_frame_idx = 0
         self.neko_timer.start(400)
+
+        # Version Badge in Status Bar
+        self.version_badge = QLabel(PLUGIN_VERSION_STR, self)
+        self.version_badge.setStyleSheet("color: #888; font-size: 11px; padding: 2px 6px; background-color: #242424; border: 1px solid #3d3d3d; border-radius: 3px;")
+        status_bar.addWidget(self.version_badge)
 
         main_layout.addLayout(status_bar)
     def manual_fetch_mirrors(self):

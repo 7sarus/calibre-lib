@@ -17,6 +17,10 @@ from qt.core import (
     QGroupBox,
 )
 
+# Plugin Version definitions
+PLUGIN_VERSION = (1, 0, 1, "b")
+PLUGIN_VERSION_STR = "v1.0.1b"
+
 # Store configuration under Calibre's standard plugin config path
 prefs = JSONConfig("plugins/libgen_store")
 
