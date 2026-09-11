@@ -1,0 +1,35 @@
+name: Beta Build (Artifacts Only)
+
+on:
+  push:
+    branches: [ beta ]
+    tags:
+      - 'v*b*'
+      - 'v*-beta*'
+      - 'v*.b*'
+  workflow_dispatch:
+
+jobs:
+  build-beta:
+    name: Package Beta Plugin
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build Plugin Zip
+        run: |
+          make build
+          ls -lh libgen_downloader.zip
+
+      - name: Upload Beta Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libgen_downloader_${{ github.ref_name }}
+          path: libgen_downloader.zip
