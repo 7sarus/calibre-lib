@@ -18,8 +18,8 @@ from qt.core import (
 )
 
 # Plugin Version definitions
-PLUGIN_VERSION = (1, 0, 2, "b")
-PLUGIN_VERSION_STR = "v1.0.2b"
+PLUGIN_VERSION = (1, 0, 1, "release")
+PLUGIN_VERSION_STR = "v1.0.1"
 
 # Store configuration under Calibre's standard plugin config path
 prefs = JSONConfig("plugins/libgen_store")
