@@ -789,7 +789,7 @@ class LibgenDialog(QDialog):
 
         self.start_download_btn = QPushButton("Start Bulk Download", self)
         self.start_download_btn.setStyleSheet("font-weight: bold; background-color: #2b5b84; color: white; padding: 6px 14px;")
-        self.start_download_btn.clicked.connect(self.start_bulk_download)
+        self.start_download_btn.clicked.connect(lambda: self.start_bulk_download())
         queue_btn_bar.addWidget(self.start_download_btn)
 
         queue_layout.addLayout(queue_btn_bar)
@@ -1515,7 +1515,7 @@ class LibgenDialog(QDialog):
         import time
         self.bulk_start_time = time.time()
 
-        if target_indices is not None:
+        if target_indices is not None and not isinstance(target_indices, bool):
             self.session_target_indices = list(target_indices)
         else:
             self.session_target_indices = [
