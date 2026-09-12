@@ -715,11 +715,7 @@ class LibgenDialog(QDialog):
         # --- Row 1 ---
         row1.addWidget(QLabel("Search:"))
         self.search_input = QLineEdit(self)
-        cur_query = prefs.get("last_search_query", "")
-        if cur_query:
-            self.search_input.setText(cur_query)
         self.search_input.returnPressed.connect(self.start_search)
-        self.search_input.textChanged.connect(self.save_all_field_preferences)
         row1.addWidget(self.search_input, stretch=3)
 
         row1.addWidget(QLabel("Field:"))
@@ -1503,7 +1499,15 @@ class LibgenDialog(QDialog):
             ascii_bar = "█" * filled + "░" * (10 - filled)
             self.queue_table.setItem(row, 6, QTableWidgetItem(f"[{ascii_bar}] {pct}%"))
 
-        self.tabs.setTabText(1, f"Bulk Queue ({len(self.queue_items)})")
+        remaining = sum(
+            1 for q in self.queue_items
+            if q.get("status") not in ("✓ Added to Library", "Downloaded", "✓ Downloaded (Pending Review)")
+        )
+        total = len(self.queue_items)
+        if 0 < remaining < total:
+            self.tabs.setTabText(1, f"Bulk Queue ({remaining} left)")
+        else:
+            self.tabs.setTabText(1, f"Bulk Queue ({total})")
         self.apply_queue_filter()
         self.save_queue()
 
@@ -1864,13 +1868,15 @@ class LibgenDialog(QDialog):
 
         self.session_total = len(self.session_target_indices)
         self.session_completed = 0
+        remaining = self.session_total
 
         self.start_download_btn.setVisible(False)
         self.stop_download_btn.setVisible(True)
         self.stop_download_btn.setEnabled(True)
         self.stop_download_btn.setText("Stop Download")
-        self.status_label.setText(f"0/{self.session_total} downloaded")
-        self.append_log(f"--- Starting Bulk Download: {self.session_total} pending item(s) ---")
+        self.status_label.setText(f"0/{self.session_total} downloaded ({remaining} remaining)")
+        self.tabs.setTabText(1, f"Bulk Queue ({remaining} left)")
+        self.append_log(f"--- Starting Bulk Download: {remaining} remaining item(s) ---")
 
         do_auto_retry = False
         if hasattr(self, 'auto_retry_checkbox'):
@@ -1941,10 +1947,14 @@ class LibgenDialog(QDialog):
                 )
                 self.session_completed = completed
                 total = getattr(self, "session_total", len(self.session_target_indices))
-                self.status_label.setText(f"{completed}/{total} downloaded")
+                remaining = max(0, total - completed)
+                self.status_label.setText(f"{completed}/{total} downloaded ({remaining} remaining)")
+                self.tabs.setTabText(1, f"Bulk Queue ({remaining} left)" if remaining > 0 else f"Bulk Queue ({len(self.queue_items)})")
             else:
                 downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
-                self.status_label.setText(f"{downloaded}/{len(self.queue_items)} downloaded")
+                remaining = max(0, len(self.queue_items) - downloaded)
+                self.status_label.setText(f"{downloaded}/{len(self.queue_items)} downloaded ({remaining} remaining)")
+                self.tabs.setTabText(1, f"Bulk Queue ({remaining} left)" if remaining > 0 else f"Bulk Queue ({len(self.queue_items)})")
 
     def on_item_progress(self, idx, bytes_read, total_bytes, speed_kb):
         if total_bytes > 0:
@@ -1962,10 +1972,14 @@ class LibgenDialog(QDialog):
                     if self.queue_items[i].get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"]
                 )
                 total = getattr(self, "session_total", len(self.session_target_indices))
-                self.status_label.setText(f"{completed}/{total} downloaded")
+                remaining = max(0, total - completed)
+                self.status_label.setText(f"{completed}/{total} downloaded ({remaining} remaining)")
+                self.tabs.setTabText(1, f"Bulk Queue ({remaining} left)" if remaining > 0 else f"Bulk Queue ({len(self.queue_items)})")
             else:
                 downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
-                self.status_label.setText(f"{downloaded}/{len(self.queue_items)} downloaded")
+                remaining = max(0, len(self.queue_items) - downloaded)
+                self.status_label.setText(f"{downloaded}/{len(self.queue_items)} downloaded ({remaining} remaining)")
+                self.tabs.setTabText(1, f"Bulk Queue ({remaining} left)" if remaining > 0 else f"Bulk Queue ({len(self.queue_items)})")
 
     def import_books_to_library(self, file_paths):
         """Batch import downloaded books into Calibre library."""
@@ -2154,8 +2168,6 @@ class LibgenDialog(QDialog):
 
     def _do_save_all_field_preferences(self):
         """Actually persists the current values to disk."""
-        if hasattr(self, "search_input"):
-            prefs["last_search_query"] = self.search_input.text().strip()
         if hasattr(self, "field_combo"):
             prefs["search_field"] = self.field_combo.currentText().strip()
         if hasattr(self, "category_combo"):
