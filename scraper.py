@@ -6,6 +6,7 @@ Core HTML scraping and mirror management for LibGen.
 """
 
 import os
+import re
 import shutil
 import threading
 import concurrent.futures
@@ -112,6 +113,7 @@ class LibgenScraper:
         preferred_language="Any",
         preferred_format="Any",
         filter_mode="Prioritize",
+        unique_results=True,
         progress_callback=None,
         abort_check=None,
     ):
@@ -141,7 +143,9 @@ class LibgenScraper:
                 return None, mirror
             try:
                 b = self._get_browser()
-                search_url = f"{mirror}/index.php?req={encoded_query}{field_param}{topic_param}&res={max_results * 2}"
+                # Request 4x max_results so deduplication and language filtering have ample candidates
+                fetch_count = max(max_results * 4, 25)
+                search_url = f"{mirror}/index.php?req={encoded_query}{field_param}{topic_param}&res={fetch_count}"
                 resp = b.open(search_url, timeout=self.timeout)
                 if found_event.is_set() or (abort_check and abort_check()):
                     return None, mirror
@@ -182,6 +186,10 @@ class LibgenScraper:
 
         if not books:
             return []
+
+        # Deduplicate books if unique_results is enabled
+        if unique_results:
+            books = self._deduplicate_books(books)
 
         # Filter and rank books based on language and format preferences
         filtered_books = self._filter_and_rank(
@@ -251,21 +259,50 @@ class LibgenScraper:
 
         return books
 
+    def _deduplicate_books(self, books):
+        """
+        Deduplicates books by normalized (title, author, extension).
+        Preserves the first/best occurrences.
+        """
+        seen = set()
+        unique = []
+        for b in books:
+            clean_title = re.sub(r'[\W_]+', '', (b.title or "").lower())
+            clean_author = re.sub(r'[\W_]+', '', (b.author or "").lower())
+            ext = (b.extension or "").lower()
+            key = (clean_title, clean_author, ext)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(b)
+        return unique
+
     def _filter_and_rank(self, books, preferred_language, preferred_format, filter_mode):
         """
-        Handles language and format locking/filtering:
+        Handles multi-language and format locking/filtering:
         - Strict mode: Completely discards non-matching results.
         - Prioritize mode: Surfaces matching results to the top of the list.
         """
-        pref_lang = (preferred_language or "").strip().lower()
+        if isinstance(preferred_language, (list, tuple, set)):
+            pref_langs = [str(l).strip().lower() for l in preferred_language if str(l).strip()]
+        else:
+            pref_langs = [l.strip().lower() for l in (preferred_language or "").split(",") if l.strip()]
+
+        has_lang_filter = bool(pref_langs) and ("any" not in pref_langs)
+
+        def matches_language(book):
+            if not has_lang_filter:
+                return True
+            book_lang = (book.language or "").lower()
+            return any(l in book_lang for l in pref_langs)
+
         pref_fmt = (preferred_format or "").strip().upper()
 
         if filter_mode == "Strict":
             strict_list = []
             for b in books:
-                if pref_lang and pref_lang != "any":
-                    if pref_lang not in b.language.lower():
-                        continue
+                if not matches_language(b):
+                    continue
                 if pref_fmt and pref_fmt != "ANY":
                     if b.extension != pref_fmt:
                         continue
@@ -275,9 +312,8 @@ class LibgenScraper:
         # Prioritize Mode: score items
         def get_score(book):
             score = 0
-            if pref_lang and pref_lang != "any":
-                if pref_lang in book.language.lower():
-                    score += 10
+            if has_lang_filter and matches_language(book):
+                score += 10
             if pref_fmt and pref_fmt != "ANY":
                 if book.extension == pref_fmt:
                     score += 20
@@ -676,19 +712,69 @@ class LibgenScraper:
                     pass
             raise e
 
+    def _find_alternative_md5_by_title(self, current_md5, title, author=None, ext=None, log_callback=None):
+        """
+        Lean secondary fallback: when primary MD5 fails across all mirrors,
+        queries 1 reliable mirror by Title to discover alternative working MD5 hashes.
+        Uses minimal network resources (1 query).
+        """
+        if not title or len(title.strip()) < 3:
+            return None
+
+        # Clean title: take first segment before punctuation/subtitles
+        clean_title = re.split(r'[:(;,]', title)[0].strip()
+        if len(clean_title) < 3:
+            clean_title = title.strip()[:40]
+
+        if log_callback:
+            log_callback(f"🔍 Lean fallback: searching mirror for alternative upload of \"{clean_title[:35]}\"...")
+
+        clean_mirrors = [m.strip().rstrip("/") for m in self.mirrors if m.strip()]
+        if not clean_mirrors:
+            return None
+
+        target_mirror = clean_mirrors[0]
+        try:
+            b = self._get_browser()
+            query_url = f"{target_mirror}/index.php?req={quote_plus(clean_title)}&columns%5B%5D=t&res=10"
+            resp = b.open(query_url, timeout=8)
+            html = resp.read()
+            soup = BeautifulSoup(html, HTML_PARSER)
+            candidate_books = self._parse_search_page(soup, target_mirror)
+
+            target_ext = (ext or "").lower()
+            for cand in candidate_books:
+                if target_ext and (cand.extension or "").lower() != target_ext:
+                    continue
+                m = re.search(r'md5=([a-fA-F0-9]{32})', cand.detail_url)
+                cand_md5 = m.group(1).lower() if m else None
+                if cand_md5 and cand_md5 != (current_md5 or "").lower():
+                    if log_callback:
+                        log_callback(f"✓ Found alternative upload (MD5: {cand_md5[:8]}...) via title search.")
+                    return cand.detail_url
+        except Exception as e:
+            if log_callback:
+                log_callback(f"Alternative title search skipped ({e}).")
+        return None
+
     def resolve_and_download(
         self,
         detail_url,
         destination_path,
+        book_title=None,
+        book_author=None,
+        book_ext=None,
         log_callback=None,
         progress_callback=None,
         link_callback=None,
         abort_check=None,
+        fast_mode=False,
     ):
         """
         Resolves direct download links and streams files.
         Concurrently probes candidate mirrors, downloads via multi-threaded segmented
         piece-together if supported, with automatic failover to single-stream mirror downloads.
+        In fast_mode: uses 3s probe timeout and skips directly to failed list without long fallback chains.
         """
         from urllib.parse import urlparse
 
@@ -696,13 +782,15 @@ class LibgenScraper:
         if not candidate_urls:
             raise Exception("No candidate mirror URLs found")
 
+        probe_timeout = 3.0 if fast_mode else 10.0
         if log_callback:
-            log_callback(f"Probing {len(candidate_urls)} candidate mirrors concurrently for MD5 file...")
+            mode_tag = " [Fast Mode]" if fast_mode else ""
+            log_callback(f"Probing {len(candidate_urls)} candidate mirrors concurrently for MD5 file{mode_tag}...")
 
         # Step 1: Concurrently probe candidate mirrors
         working_sources = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(candidate_urls), 5)) as pool:
-            futures = {pool.submit(self._probe_source, u, 10): u for u in candidate_urls}
+            futures = {pool.submit(self._probe_source, u, probe_timeout): u for u in candidate_urls}
             for fut in concurrent.futures.as_completed(futures):
                 if abort_check and abort_check():
                     raise Exception("Stopped by user")
@@ -714,6 +802,10 @@ class LibgenScraper:
                             log_callback(f"✓ Mirror {res['host']} online (size: {res['total_bytes']:,} bytes, range: {res['accepts_ranges']})")
                 except Exception:
                     pass
+
+        # Fast Mode check: if no responsive mirrors after fast probe, skip immediately
+        if fast_mode and not working_sources:
+            raise Exception("Skipped (troubled / unresponsive mirrors in fast mode)")
 
         # Step 2: Check if multi-mirror segmented piece-together is viable
         range_sources = [
@@ -738,6 +830,8 @@ class LibgenScraper:
             except Exception as seg_err:
                 if abort_check and abort_check():
                     raise Exception("Stopped by user")
+                if fast_mode:
+                    raise Exception(f"Skipped (fast mode segmented error: {seg_err})")
                 if log_callback:
                     log_callback(f"⚠ Segmented download error ({seg_err}). Falling back to single-stream...")
 
@@ -769,11 +863,38 @@ class LibgenScraper:
                 except Exception as stream_err:
                     if abort_check and abort_check():
                         raise Exception("Stopped by user")
+                    if fast_mode:
+                        raise Exception(f"Skipped (fast mode stream error on {host}: {stream_err})")
                     if log_callback:
                         log_callback(f"Stream error on {host}: {stream_err}. Retrying next source...")
                     continue
 
-        # Step 4: Sequential fallback across all candidate URLs if probe missed anything
+        # In Fast Mode, skip long sequential fallback chain
+        if fast_mode:
+            raise Exception("Skipped (fast mode: all online candidate mirrors failed)")
+
+        # Step 4: Lean Secondary Fallback (Non-MD5 Title Search) before exhaustive sequential probe
+        if not working_sources and book_title:
+            cur_md5_match = re.search(r'md5=([a-fA-F0-9]{32})', detail_url)
+            cur_md5 = cur_md5_match.group(1) if cur_md5_match else None
+            alt_url = self._find_alternative_md5_by_title(
+                cur_md5, book_title, author=book_author, ext=book_ext, log_callback=log_callback
+            )
+            if alt_url:
+                return self.resolve_and_download(
+                    alt_url,
+                    destination_path,
+                    book_title=None,
+                    book_author=None,
+                    book_ext=None,
+                    log_callback=log_callback,
+                    progress_callback=progress_callback,
+                    link_callback=link_callback,
+                    abort_check=abort_check,
+                    fast_mode=fast_mode,
+                )
+
+        # Step 5: Sequential fallback across all candidate URLs if probe missed anything
         last_error = None
         for url in candidate_urls:
             if abort_check and abort_check():

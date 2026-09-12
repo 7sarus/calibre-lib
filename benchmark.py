@@ -54,20 +54,25 @@ def run_benchmark():
     logger.log("START", "=== Starting Benchmark: Series 'Foundation' (5 books) ===")
     total_start = time.perf_counter()
 
+    fast_mode = "--fast" in sys.argv
+    unique_mode = "--no-unique" not in sys.argv
+
     # Step 1: Initialize Scraper & Mirrors
     t0 = time.perf_counter()
     mirrors = get_mirrors()
     scraper = LibgenScraper(mirrors=mirrors, timeout=15)
     t_init = time.perf_counter() - t0
-    logger.log("INIT", f"Loaded {len(mirrors)} mirrors: {', '.join(mirrors[:3])}...", t_init)
+    mode_desc = " [FAST MODE]" if fast_mode else " [STANDARD MODE]"
+    logger.log("INIT", f"Loaded {len(mirrors)} mirrors: {', '.join(mirrors[:3])}...{mode_desc}", t_init)
 
     # Step 2: Search for Series "Foundation" (max_results=5)
-    logger.log("SEARCH", "Searching for series 'Foundation' (max_results=5)...")
+    logger.log("SEARCH", f"Searching for series 'Foundation' (max_results=5, unique={unique_mode})...")
     t0 = time.perf_counter()
     books = scraper.search(
         query="Foundation",
         search_field="s",
         max_results=5,
+        unique_results=unique_mode,
     )
     t_search = time.perf_counter() - t0
     logger.log("SEARCH", f"Found {len(books)} books from mirror search", t_search)
@@ -116,8 +121,12 @@ def run_benchmark():
                 dest_path, cover = scraper.resolve_and_download(
                     book.detail_url,
                     dest_file,
+                    book_title=book.title,
+                    book_author=book.author,
+                    book_ext=book.extension,
                     log_callback=on_log,
                     link_callback=on_link,
+                    fast_mode=fast_mode,
                 )
                 t_book_end = time.perf_counter()
                 t_book_total = t_book_end - t_book_start

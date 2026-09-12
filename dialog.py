@@ -39,6 +39,8 @@ from qt.core import (
     QTimer,
     QCheckBox,
     QSpinBox,
+    QStandardItem,
+    QStandardItemModel,
 )
 
 
@@ -79,12 +81,90 @@ class SizeTableWidgetItem(QTableWidgetItem):
         return _parse(self.text()) < _parse(other.text())
 
 
+class CheckableComboBox(QComboBox):
+    selection_changed = pyqtSignal(list)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setModel(QStandardItemModel(self))
+        self.setEditable(True)
+        self.lineEdit().setReadOnly(True)
+        self.lineEdit().setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.view().pressed.connect(self.handle_item_pressed)
+
+    def handle_item_pressed(self, index):
+        item = self.model().itemFromIndex(index)
+        if not item:
+            return
+        if item.text() == "Any":
+            for r in range(self.model().rowCount()):
+                it = self.model().item(r)
+                if it:
+                    it.setCheckState(Qt.CheckState.Checked if r == index.row() else Qt.CheckState.Unchecked)
+        else:
+            any_item = self.model().item(0)
+            if any_item and any_item.text() == "Any":
+                any_item.setCheckState(Qt.CheckState.Unchecked)
+            new_state = Qt.CheckState.Unchecked if item.checkState() == Qt.CheckState.Checked else Qt.CheckState.Checked
+            item.setCheckState(new_state)
+
+            has_checked = any(
+                self.model().item(r).checkState() == Qt.CheckState.Checked
+                for r in range(self.model().rowCount())
+                if self.model().item(r)
+            )
+            if not has_checked and any_item:
+                any_item.setCheckState(Qt.CheckState.Checked)
+
+        self.update_display_text()
+        self.selection_changed.emit(self.checked_items())
+
+    def add_checkable_items(self, items, checked_items=None):
+        self.model().clear()
+        checked_set = set(checked_items or ["Any"])
+        if not checked_set or "Any" in checked_set:
+            checked_set = {"Any"}
+        for text in items:
+            item = QStandardItem(text)
+            item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            is_chk = (text in checked_set)
+            item.setCheckState(Qt.CheckState.Checked if is_chk else Qt.CheckState.Unchecked)
+            self.model().appendRow(item)
+        self.update_display_text()
+
+    def checked_items(self):
+        checked = []
+        for r in range(self.model().rowCount()):
+            it = self.model().item(r)
+            if it and it.checkState() == Qt.CheckState.Checked:
+                checked.append(it.text())
+        if not checked:
+            checked = ["Any"]
+        return checked
+
+    def update_display_text(self):
+        items = self.checked_items()
+        if "Any" in items or not items:
+            self.setEditText("Lang: Any")
+            self.setToolTip("Filter by languages (Click to check multiple)")
+        elif len(items) == 1:
+            self.setEditText(f"Lang: {items[0]}")
+            self.setToolTip(f"Language: {items[0]}")
+        else:
+            self.setEditText(f"Lang: ({len(items)} selected)")
+            self.setToolTip(f"Languages: {', '.join(items)}")
+
+    def hidePopup(self):
+        super().hidePopup()
+        self.update_display_text()
+
+
 class SearchWorker(QThread):
     finished_signal = pyqtSignal(list, str)   # books, mirror_used
     error_signal = pyqtSignal(str)
     progress_signal = pyqtSignal(int, int, str)  # current_idx, total_mirrors, mirror_url
 
-    def __init__(self, query, search_field, category, selected_mirror, language, fmt, filter_mode, max_results=5, parent=None):
+    def __init__(self, query, search_field, category, selected_mirror, language, fmt, filter_mode, max_results=5, unique_results=True, parent=None):
         super().__init__(parent)
         self.query = query
         self.search_field = search_field
@@ -94,6 +174,7 @@ class SearchWorker(QThread):
         self.fmt = fmt
         self.filter_mode = filter_mode
         self.max_results = max_results
+        self.unique_results = unique_results
         self._is_aborted = False
         self._current_mirror = ""
 
@@ -120,6 +201,7 @@ class SearchWorker(QThread):
                 preferred_language=self.language,
                 preferred_format=self.fmt,
                 filter_mode=self.filter_mode,
+                unique_results=self.unique_results,
                 progress_callback=on_progress,
                 abort_check=lambda: self._is_aborted,
             )
@@ -278,10 +360,11 @@ class BulkDownloadWorker(QThread):
     link_trying = pyqtSignal(int, str, str)        # index, url, stage ("resolving" or "streaming")
     all_done = pyqtSignal(list, int, bool)         # downloaded_items, fail_count, is_aborted
 
-    def __init__(self, items, auto_retry=False, parent=None):
+    def __init__(self, items, auto_retry=False, fast_mode=False, parent=None):
         super().__init__(parent)
         self.items = items
         self.auto_retry = auto_retry
+        self.fast_mode = fast_mode
         self._is_aborted = False
 
     def abort(self):
@@ -341,10 +424,14 @@ class BulkDownloadWorker(QThread):
                     dest_path, cover_url = scraper.resolve_and_download(
                         book.detail_url,
                         dest_file,
+                        book_title=book.title,
+                        book_author=book.author,
+                        book_ext=book.extension,
                         log_callback=on_log,
                         progress_callback=on_progress,
                         link_callback=on_link,
                         abort_check=lambda: self._is_aborted,
+                        fast_mode=self.fast_mode,
                     )
                     item["dest_file"] = dest_path
                     item["status"] = "Downloaded"
@@ -612,13 +699,13 @@ class LibgenDialog(QDialog):
 
         # --- Row 2 ---
         row2.addWidget(QLabel("Lang:"))
-        self.lang_combo = QComboBox(self)
-        self.lang_combo.addItems(SUPPORTED_LANGUAGES)
-        cur_lang = prefs.get("preferred_language", "English")
-        l_idx = self.lang_combo.findText(cur_lang)
-        if l_idx >= 0:
-            self.lang_combo.setCurrentIndex(l_idx)
-        self.lang_combo.currentTextChanged.connect(self.save_all_field_preferences)
+        self.lang_combo = CheckableComboBox(self)
+        saved_langs = prefs.get("preferred_languages")
+        if not saved_langs:
+            single = prefs.get("preferred_language", "English")
+            saved_langs = [single] if single else ["English"]
+        self.lang_combo.add_checkable_items(SUPPORTED_LANGUAGES, saved_langs)
+        self.lang_combo.selection_changed.connect(self.save_all_field_preferences)
         row2.addWidget(self.lang_combo)
 
         row2.addWidget(QLabel("Format:"))
@@ -656,6 +743,12 @@ class LibgenDialog(QDialog):
         self.max_results_spinbox.setRange(1, 1000)
         self.max_results_spinbox.setValue(5)
         row2.addWidget(self.max_results_spinbox)
+
+        self.unique_checkbox = QCheckBox("Unique", self)
+        self.unique_checkbox.setToolTip("Filter out duplicate books (same title, author, and format)")
+        self.unique_checkbox.setChecked(bool(prefs.get("unique_results", True)))
+        self.unique_checkbox.stateChanged.connect(self.save_all_field_preferences)
+        row2.addWidget(self.unique_checkbox)
         
         row2.addStretch(1)
 
@@ -732,6 +825,27 @@ class LibgenDialog(QDialog):
         tab_queue = QWidget()
         queue_layout = QVBoxLayout(tab_queue)
 
+        # Queue Segmentation: All, Queued, Downloading, Failed
+        filter_bar = QHBoxLayout()
+        filter_bar.addWidget(QLabel("View:"))
+        self.queue_filter_mode = "All"
+        self.queue_filter_btns = {}
+
+        for mode in ("All", "Queued", "Downloading", "Failed"):
+            btn = QPushButton(f"{mode} (0)", self)
+            btn.setCheckable(True)
+            if mode == "All":
+                btn.setChecked(True)
+                btn.setStyleSheet("font-weight: bold; background-color: #2b5b84; color: white; padding: 3px 10px;")
+            else:
+                btn.setStyleSheet("padding: 3px 10px;")
+            btn.clicked.connect(lambda checked, m=mode: self.set_queue_filter(m))
+            filter_bar.addWidget(btn)
+            self.queue_filter_btns[mode] = btn
+
+        filter_bar.addStretch(1)
+        queue_layout.addLayout(filter_bar)
+
         self.queue_table = QTableWidget(self)
         self.queue_table.setColumnCount(7)
         self.queue_table.setHorizontalHeaderLabels([
@@ -778,6 +892,12 @@ class LibgenDialog(QDialog):
         self.auto_retry_checkbox = QCheckBox("Retry until all articles are downloaded", self)
         self.auto_retry_checkbox.setChecked(False)
         queue_btn_bar.addWidget(self.auto_retry_checkbox)
+
+        self.fast_mode_checkbox = QCheckBox("⚡ Fast Mode", self)
+        self.fast_mode_checkbox.setToolTip("Fast Mode: 3s mirror probe, skips dead/troubled downloads immediately to Failed list")
+        self.fast_mode_checkbox.setChecked(bool(prefs.get("fast_mode", False)))
+        self.fast_mode_checkbox.stateChanged.connect(self.save_all_field_preferences)
+        queue_btn_bar.addWidget(self.fast_mode_checkbox)
 
         queue_btn_bar.addStretch()
 
@@ -1112,9 +1232,11 @@ class LibgenDialog(QDialog):
 
         prefs["search_field"] = field_text
         prefs["selected_mirror"] = selected_mirror
-        prefs["preferred_language"] = self.lang_combo.currentText().strip()
+        prefs["preferred_languages"] = self.lang_combo.checked_items()
+        prefs["preferred_language"] = ", ".join(self.lang_combo.checked_items())
         prefs["preferred_format"] = self.format_combo.currentText().strip()
         prefs["filter_mode"] = self.filter_combo.currentText().strip()
+        prefs["unique_results"] = self.unique_checkbox.isChecked()
 
         cat_text = self.category_combo.currentText().strip()
         cat_code = CATEGORIES.get(cat_text, "")
@@ -1125,10 +1247,11 @@ class LibgenDialog(QDialog):
             search_field=field_code,
             category=cat_code,
             selected_mirror=selected_mirror,
-            language=self.lang_combo.currentText().strip(),
+            language=self.lang_combo.checked_items(),
             fmt=self.format_combo.currentText().strip(),
             filter_mode=self.filter_combo.currentText().strip(),
             max_results=self.max_results_spinbox.value(),
+            unique_results=self.unique_checkbox.isChecked(),
             parent=self,
         )
         self.search_worker.progress_signal.connect(self.on_search_progress)
@@ -1274,7 +1397,14 @@ class LibgenDialog(QDialog):
             self.queue_table.setItem(row, 1, QTableWidgetItem(book.author))
             self.queue_table.setItem(row, 2, QTableWidgetItem(book.extension))
             self.queue_table.setItem(row, 3, QTableWidgetItem(book.size))
-            self.queue_table.setItem(row, 4, QTableWidgetItem(q.get("status", "Queued")))
+            status_text = q.get("status", "Queued")
+            status_item = QTableWidgetItem(status_text)
+            st_lower = status_text.lower()
+            if "failed" in st_lower or "error" in st_lower or "skipped" in st_lower:
+                status_item.setForeground(QColor("#ef4444"))
+            elif "downloaded" in st_lower or "added" in st_lower:
+                status_item.setForeground(QColor("#22c55e"))
+            self.queue_table.setItem(row, 4, status_item)
             self.queue_table.setItem(row, 5, QTableWidgetItem(""))
             pct = q.get("progress", 0)
             filled = pct // 10
@@ -1282,6 +1412,63 @@ class LibgenDialog(QDialog):
             self.queue_table.setItem(row, 6, QTableWidgetItem(f"[{ascii_bar}] {pct}%"))
 
         self.tabs.setTabText(1, f"Bulk Queue ({len(self.queue_items)})")
+        self.apply_queue_filter()
+
+    def set_queue_filter(self, mode):
+        self.queue_filter_mode = mode
+        if hasattr(self, "queue_filter_btns"):
+            for m, btn in self.queue_filter_btns.items():
+                btn.setChecked(m == mode)
+                if m == mode:
+                    btn.setStyleSheet("font-weight: bold; background-color: #2b5b84; color: white; padding: 3px 10px;")
+                else:
+                    btn.setStyleSheet("padding: 3px 10px;")
+        self.apply_queue_filter()
+
+    def apply_queue_filter(self):
+        if not hasattr(self, "queue_table") or not hasattr(self, "queue_items"):
+            return
+
+        queued_cnt = 0
+        dl_cnt = 0
+        failed_cnt = 0
+        total_cnt = len(self.queue_items)
+
+        for row, q in enumerate(self.queue_items):
+            status = str(q.get("status", "")).lower()
+            is_queued = "queued" in status
+            is_dl = "downloading" in status or "resolving" in status or "streaming" in status or "piece-together" in status
+            is_failed = "failed" in status or "error" in status or "skipped" in status
+
+            if is_queued:
+                queued_cnt += 1
+            elif is_dl:
+                dl_cnt += 1
+            elif is_failed:
+                failed_cnt += 1
+
+            if getattr(self, "queue_filter_mode", "All") == "All":
+                hide = False
+            elif self.queue_filter_mode == "Queued":
+                hide = not is_queued
+            elif self.queue_filter_mode == "Downloading":
+                hide = not is_dl
+            elif self.queue_filter_mode == "Failed":
+                hide = not is_failed
+            else:
+                hide = False
+
+            self.queue_table.setRowHidden(row, hide)
+
+        if hasattr(self, "queue_filter_btns"):
+            if "All" in self.queue_filter_btns:
+                self.queue_filter_btns["All"].setText(f"All ({total_cnt})")
+            if "Queued" in self.queue_filter_btns:
+                self.queue_filter_btns["Queued"].setText(f"Queued ({queued_cnt})")
+            if "Downloading" in self.queue_filter_btns:
+                self.queue_filter_btns["Downloading"].setText(f"Downloading ({dl_cnt})")
+            if "Failed" in self.queue_filter_btns:
+                self.queue_filter_btns["Failed"].setText(f"Failed ({failed_cnt})")
 
     def remove_from_queue(self):
         selected_rows = sorted(set(idx.row() for idx in self.queue_table.selectedIndexes()), reverse=True)
@@ -1541,7 +1728,13 @@ class LibgenDialog(QDialog):
         if hasattr(self, 'auto_retry_checkbox'):
             do_auto_retry = self.auto_retry_checkbox.isChecked()
 
-        self.download_worker = BulkDownloadWorker(self.queue_items, auto_retry=do_auto_retry, parent=self)
+        do_fast_mode = False
+        if hasattr(self, 'fast_mode_checkbox'):
+            do_fast_mode = self.fast_mode_checkbox.isChecked()
+
+        self.download_worker = BulkDownloadWorker(
+            self.queue_items, auto_retry=do_auto_retry, fast_mode=do_fast_mode, parent=self
+        )
         self.download_worker.item_status.connect(self.on_item_status)
         self.download_worker.item_progress.connect(self.on_item_progress)
         self.download_worker.log_message.connect(self.append_log)
@@ -1576,6 +1769,7 @@ class LibgenDialog(QDialog):
         if idx < len(self.queue_items):
             self.queue_items[idx]["status"] = status_text
             self.queue_table.setItem(idx, 4, QTableWidgetItem(status_text))
+            self.apply_queue_filter()
         
         if stage == "streaming" or stage == "segmented":
             self.side_mirror_status.appendPlainText(f"[CONN] {host}")
@@ -1583,7 +1777,14 @@ class LibgenDialog(QDialog):
     def on_item_status(self, idx, status_text):
         if idx < len(self.queue_items):
             self.queue_items[idx]["status"] = status_text
-            self.queue_table.setItem(idx, 4, QTableWidgetItem(status_text))
+            status_item = QTableWidgetItem(status_text)
+            st_lower = status_text.lower()
+            if "failed" in st_lower or "error" in st_lower or "skipped" in st_lower:
+                status_item.setForeground(QColor("#ef4444"))
+            elif "downloaded" in st_lower or "added" in st_lower:
+                status_item.setForeground(QColor("#22c55e"))
+            self.queue_table.setItem(idx, 4, status_item)
+            self.apply_queue_filter()
             
             # Active session download counter
             if hasattr(self, "session_target_indices") and self.session_target_indices:
@@ -1788,11 +1989,17 @@ class LibgenDialog(QDialog):
         if hasattr(self, "category_combo"):
             prefs["search_category"] = self.category_combo.currentText().strip()
         if hasattr(self, "lang_combo"):
-            prefs["preferred_language"] = self.lang_combo.currentText().strip()
+            langs = self.lang_combo.checked_items()
+            prefs["preferred_languages"] = langs
+            prefs["preferred_language"] = ", ".join(langs)
         if hasattr(self, "format_combo"):
             prefs["preferred_format"] = self.format_combo.currentText().strip()
         if hasattr(self, "filter_combo"):
             prefs["filter_mode"] = self.filter_combo.currentText().strip()
+        if hasattr(self, "unique_checkbox"):
+            prefs["unique_results"] = self.unique_checkbox.isChecked()
+        if hasattr(self, "fast_mode_checkbox"):
+            prefs["fast_mode"] = self.fast_mode_checkbox.isChecked()
         if hasattr(self, "mirror_combo"):
             m_text = self.mirror_combo.currentText().strip()
             if m_text.startswith("Auto"):
