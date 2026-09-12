@@ -1,4 +1,4 @@
-name: Beta Build (Artifacts Only)
+name: Beta Build and Release
 
 on:
   push:
@@ -11,8 +11,10 @@ on:
 
 jobs:
   build-beta:
-    name: Package Beta Plugin
+    name: Package and Release Beta Plugin
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Code
@@ -33,3 +35,12 @@ jobs:
         with:
           name: libgen_downloader_${{ github.ref_name }}
           path: libgen_downloader.zip
+
+      - name: Create Beta GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }} (Beta)
+          files: libgen_downloader.zip
+          prerelease: true
+          generate_release_notes: true
