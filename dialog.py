@@ -144,16 +144,31 @@ class CheckableComboBox(QComboBox):
             checked = ["Any"]
         return checked
 
+    LANG_CODE_MAP = {
+        "English": "EN",
+        "Spanish": "ES",
+        "French": "FR",
+        "German": "DE",
+        "Russian": "RU",
+        "Italian": "IT",
+        "Portuguese": "PT",
+        "Chinese": "ZH",
+        "Japanese": "JA",
+        "Any": "Any",
+    }
+
     def update_display_text(self):
         items = self.checked_items()
         if "Any" in items or not items:
-            self.setEditText("Lang: Any")
+            self.setEditText("Any")
             self.setToolTip("Filter by languages (Click to check multiple)")
         elif len(items) == 1:
-            self.setEditText(f"Lang: {items[0]}")
+            code = self.LANG_CODE_MAP.get(items[0], items[0][:3].upper())
+            self.setEditText(code)
             self.setToolTip(f"Language: {items[0]}")
         else:
-            self.setEditText(f"Lang: ({len(items)} selected)")
+            short_codes = [self.LANG_CODE_MAP.get(i, i[:3].upper()) for i in items]
+            self.setEditText(", ".join(short_codes))
             self.setToolTip(f"Languages: {', '.join(items)}")
 
     def hidePopup(self):
@@ -603,7 +618,9 @@ class LibgenDialog(QDialog):
         super().__init__(parent or gui)
         self.gui = gui
         self.setWindowTitle(f"LibGen Downloader ({PLUGIN_VERSION_STR})")
-        self.resize(1020, 620)
+        saved_w = int(prefs.get("dialog_width", 1020))
+        saved_h = int(prefs.get("dialog_height", 620))
+        self.resize(saved_w, saved_h)
 
         self.search_results = []
         self.queue_items = []
@@ -712,6 +729,7 @@ class LibgenDialog(QDialog):
         # --- Row 2 ---
         row2.addWidget(QLabel("Lang:"))
         self.lang_combo = CheckableComboBox(self)
+        self.lang_combo.setMinimumWidth(85)
         saved_langs = prefs.get("preferred_languages")
         if not saved_langs:
             single = prefs.get("preferred_language", "English")
@@ -753,7 +771,8 @@ class LibgenDialog(QDialog):
         row2.addWidget(QLabel("Max:"))
         self.max_results_spinbox = QSpinBox(self)
         self.max_results_spinbox.setRange(1, 1000)
-        self.max_results_spinbox.setValue(5)
+        self.max_results_spinbox.setValue(int(prefs.get("max_results", 5)))
+        self.max_results_spinbox.valueChanged.connect(self.save_all_field_preferences)
         row2.addWidget(self.max_results_spinbox)
 
         self.unique_checkbox = QCheckBox("Unique", self)
@@ -1949,6 +1968,7 @@ class LibgenDialog(QDialog):
                 self.status_label.setText(f"Failed ({time_str}): {fail_count} failed.")
                 if self.show_stats:
                     QMessageBox.warning(self, "Download Failed", f"All downloads failed.\n\n{summary_dialog_msg}")
+            self._prompt_preserve_failed_items(fail_count)
             return
 
         self.status_label.setText(f"Completed: {len(downloaded_items)} downloaded ({size_str} @ {speed_str}) in {time_str}")
@@ -1985,6 +2005,29 @@ class LibgenDialog(QDialog):
                 self.queue_table.setItem(idx, 4, QTableWidgetItem("Downloaded (Not Imported)"))
             self.status_label.setText("Import skipped. Downloaded books held in queue.")
 
+        if fail_count > 0:
+            self._prompt_preserve_failed_items(fail_count)
+
+    def _prompt_preserve_failed_items(self, fail_count):
+        if fail_count <= 0:
+            return
+        reply = QMessageBox.question(
+            self,
+            "Preserve Failed Downloads?",
+            f"{fail_count} download(s) could not complete or were stopped.\n\n"
+            "Would you like to dump and preserve the failed downloads and partial chunks in the Bulk Queue for later retry?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            for idx, itm in enumerate(self.queue_items):
+                st = itm.get("status", "").lower()
+                if "fail" in st or "stop" in st:
+                    itm["status"] = "Queued (Ready to retry)"
+                    self.queue_table.setItem(idx, 4, QTableWidgetItem("Queued (Ready to retry)"))
+            self.tabs.setCurrentIndex(1)
+            self.append_log(f"↻ Preserved {fail_count} failed download(s) and chunks in Bulk Queue for later retry.")
+
     def save_all_field_preferences(self, *args):
         """Starts a debounce timer to persist preferences without spamming disk I/O."""
         if hasattr(self, "save_timer"):
@@ -2010,11 +2053,19 @@ class LibgenDialog(QDialog):
             prefs["unique_results"] = self.unique_checkbox.isChecked()
         if hasattr(self, "fast_mode_checkbox"):
             prefs["fast_mode"] = self.fast_mode_checkbox.isChecked()
+        if hasattr(self, "max_results_spinbox"):
+            prefs["max_results"] = self.max_results_spinbox.value()
         if hasattr(self, "mirror_combo"):
             m_text = self.mirror_combo.currentText().strip()
             if m_text.startswith("Auto"):
                 m_text = "Auto"
             prefs["selected_mirror"] = m_text
+        prefs["dialog_width"] = self.width()
+        prefs["dialog_height"] = self.height()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.save_all_field_preferences()
 
     def closeEvent(self, event):
         self._do_save_all_field_preferences()
