@@ -1444,20 +1444,29 @@ class LibgenDialog(QDialog):
         failed_indices = []
         for idx, item in enumerate(self.queue_items):
             status = item.get("status", "").lower()
-            if "fail" in status or status == "failed":
+            if "fail" in status or status == "failed" or "stop" in status:
                 item["status"] = "Queued"
+                item["progress"] = 0
                 self.queue_table.setItem(idx, 4, QTableWidgetItem("Queued"))
+                self.queue_table.setItem(idx, 5, QTableWidgetItem("-"))
+                self.queue_table.setItem(idx, 6, QTableWidgetItem("[░░░░░░░░░░] 0%"))
                 failed_indices.append(idx)
 
         if not failed_indices:
             QMessageBox.information(self, "No Failed Downloads", "There are no failed items in the queue to retry.")
             return
 
+        # Explicitly reset the session download counter
+        self.session_target_indices = list(failed_indices)
+        self.session_total = len(failed_indices)
+        self.session_completed = 0
+        self.status_label.setText(f"0/{self.session_total} downloaded (Retrying {self.session_total} failed)")
+
         self.append_log(f"🔄 Retrying {len(failed_indices)} failed book(s) with multi-mirror failover...")
-        self.start_bulk_download()
+        self.start_bulk_download(target_indices=failed_indices)
 
     # --- Bulk Download Handlers ---
-    def start_bulk_download(self):
+    def start_bulk_download(self, target_indices=None):
         if hasattr(self, 'download_worker') and self.download_worker and self.download_worker.isRunning():
             QMessageBox.warning(self, "Download in Progress", "A download is already running. Please wait or stop it first.")
             return
@@ -1465,17 +1474,27 @@ class LibgenDialog(QDialog):
         import time
         self.bulk_start_time = time.time()
 
-        pending = [q for q in self.queue_items if q.get("status") != "✓ Added to Library"]
-        if not pending:
+        if target_indices is not None:
+            self.session_target_indices = list(target_indices)
+        else:
+            self.session_target_indices = [
+                idx for idx, q in enumerate(self.queue_items) 
+                if q.get("status") not in ("✓ Added to Library", "Downloaded", "✓ Downloaded (Pending Review)")
+            ]
+
+        if not self.session_target_indices:
             QMessageBox.information(self, "Queue Empty", "No pending books in download queue.")
             return
+
+        self.session_total = len(self.session_target_indices)
+        self.session_completed = 0
 
         self.start_download_btn.setVisible(False)
         self.stop_download_btn.setVisible(True)
         self.stop_download_btn.setEnabled(True)
         self.stop_download_btn.setText("Stop Download")
-        self.status_label.setText(f"Starting bulk download of {len(pending)} books...")
-        self.append_log(f"--- Starting Bulk Download: {len(pending)} pending item(s) ---")
+        self.status_label.setText(f"0/{self.session_total} downloaded")
+        self.append_log(f"--- Starting Bulk Download: {self.session_total} pending item(s) ---")
 
         do_auto_retry = False
         if hasattr(self, 'auto_retry_checkbox'):
@@ -1517,7 +1536,6 @@ class LibgenDialog(QDialog):
             self.queue_items[idx]["status"] = status_text
             self.queue_table.setItem(idx, 4, QTableWidgetItem(status_text))
         
-        # Optionally log it to the side panel if it's establishing a stream
         if stage == "streaming" or stage == "segmented":
             self.side_mirror_status.appendPlainText(f"[CONN] {host}")
 
@@ -1525,8 +1543,19 @@ class LibgenDialog(QDialog):
         if idx < len(self.queue_items):
             self.queue_items[idx]["status"] = status_text
             self.queue_table.setItem(idx, 4, QTableWidgetItem(status_text))
-            downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
-            self.status_label.setText(f"{downloaded}/{len(self.queue_items)} downloaded")
+            
+            # Active session download counter
+            if hasattr(self, "session_target_indices") and self.session_target_indices:
+                completed = sum(
+                    1 for i in self.session_target_indices 
+                    if self.queue_items[i].get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"]
+                )
+                self.session_completed = completed
+                total = getattr(self, "session_total", len(self.session_target_indices))
+                self.status_label.setText(f"{completed}/{total} downloaded")
+            else:
+                downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
+                self.status_label.setText(f"{downloaded}/{len(self.queue_items)} downloaded")
 
     def on_item_progress(self, idx, bytes_read, total_bytes, speed_kb):
         if total_bytes > 0:
@@ -1538,8 +1567,16 @@ class LibgenDialog(QDialog):
                 self.queue_table.setItem(idx, 6, QTableWidgetItem(f"[{ascii_bar}] {percent}%"))
                 self.queue_table.setItem(idx, 5, QTableWidgetItem(f"{speed_kb:.1f} KB/s"))
             
-            downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
-            self.status_label.setText(f"{downloaded}/{len(self.queue_items)} downloaded")
+            if hasattr(self, "session_target_indices") and self.session_target_indices:
+                completed = sum(
+                    1 for i in self.session_target_indices 
+                    if self.queue_items[i].get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"]
+                )
+                total = getattr(self, "session_total", len(self.session_target_indices))
+                self.status_label.setText(f"{completed}/{total} downloaded")
+            else:
+                downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
+                self.status_label.setText(f"{downloaded}/{len(self.queue_items)} downloaded")
 
     def import_books_to_library(self, file_paths):
         """Batch import downloaded books into Calibre library."""
@@ -1566,23 +1603,82 @@ class LibgenDialog(QDialog):
         self.start_download_btn.setEnabled(True)
 
         import time
-        elapsed = 0
-        if hasattr(self, 'bulk_start_time'):
-            elapsed = int(time.time() - self.bulk_start_time)
+        elapsed = 1
+        if hasattr(self, 'bulk_start_time') and self.bulk_start_time:
+            elapsed = max(1, int(time.time() - self.bulk_start_time))
 
-        summary_msg = f"Time taken: {elapsed} seconds\nDownloaded: {len(downloaded_items)}\nFailed: {fail_count}"
+        if elapsed >= 60:
+            time_str = f"{elapsed // 60}m {elapsed % 60}s"
+        else:
+            time_str = f"{elapsed}s"
+
+        # Calculate exact total bytes transferred across downloaded items
+        total_bytes = 0
+        for it in downloaded_items:
+            fp = it.get("file_path")
+            if fp and os.path.exists(fp):
+                try:
+                    total_bytes += os.path.getsize(fp)
+                except Exception:
+                    pass
+
+        # Format transferred data size
+        if total_bytes >= 1024 * 1024 * 1024:
+            size_str = f"{total_bytes / (1024**3):.2f} GB"
+        elif total_bytes >= 1024 * 1024:
+            size_str = f"{total_bytes / (1024**2):.2f} MB"
+        elif total_bytes >= 1024:
+            size_str = f"{total_bytes / 1024:.1f} KB"
+        else:
+            size_str = f"{total_bytes} B"
+
+        # Calculate average transfer bandwidth
+        if total_bytes > 0 and elapsed > 0:
+            speed_b = total_bytes / elapsed
+            if speed_b >= 1024 * 1024:
+                speed_str = f"{speed_b / (1024**2):.2f} MB/s"
+            elif speed_b >= 1024:
+                speed_str = f"{speed_b / 1024:.1f} KB/s"
+            else:
+                speed_str = f"{speed_b:.0f} B/s"
+        else:
+            speed_str = "0 KB/s"
+
+        # Formatted statistics banner
+        stats_box = (
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"  📊 Bulk Download Statistics\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"  ✓ Downloaded:    {len(downloaded_items)} item(s)\n"
+            f"  ✗ Failed:        {fail_count} item(s)\n"
+            f"  ⏱ Elapsed Time:  {time_str}\n"
+            f"  📦 Total Data:    {size_str}\n"
+            f"  ⚡ Avg Bandwidth: {speed_str}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        )
+        self.append_log(stats_box)
+        self.side_mirror_status.appendPlainText(f"[STATS] {len(downloaded_items)} dl, {size_str} @ {speed_str} in {time_str}")
+
+        summary_dialog_msg = (
+            f"Bulk download completed.\n\n"
+            f"• Downloaded:     {len(downloaded_items)} book(s)\n"
+            f"• Failed:         {fail_count} book(s)\n"
+            f"• Elapsed Time:   {time_str}\n"
+            f"• Total Data:     {size_str}\n"
+            f"• Avg Bandwidth:  {speed_str}"
+        )
 
         if not downloaded_items:
             if is_aborted:
-                self.status_label.setText("Download aborted. No books downloaded.")
-                QMessageBox.information(self, "Download Aborted", f"Downloads were stopped. No books were downloaded.\n\n{summary_msg}")
+                self.status_label.setText(f"Aborted ({time_str}): 0 downloaded.")
+                QMessageBox.information(self, "Download Aborted", f"Downloads were stopped by user.\n\n{summary_dialog_msg}")
             else:
-                self.status_label.setText(f"Download failed: {fail_count} book(s) failed.")
-                QMessageBox.warning(self, "Download Failed", f"All downloads failed ({fail_count} failed).\n\n{summary_msg}")
+                self.status_label.setText(f"Failed ({time_str}): {fail_count} failed.")
+                QMessageBox.warning(self, "Download Failed", f"All downloads failed.\n\n{summary_dialog_msg}")
             return
 
-        self.status_label.setText(f"Downloaded {len(downloaded_items)} book(s). Reviewing for import...")
-        QMessageBox.information(self, "Bulk Download Summary", f"Download queue finished.\n\n{summary_msg}")
+        self.status_label.setText(f"Completed: {len(downloaded_items)} downloaded ({size_str} @ {speed_str}) in {time_str}")
+        QMessageBox.information(self, "Bulk Download Summary", summary_dialog_msg)
 
         # Present Review modal dialog to user
         review_dlg = ReviewImportDialog(downloaded_items, is_aborted=is_aborted, parent=self)
