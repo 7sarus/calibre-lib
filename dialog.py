@@ -61,7 +61,32 @@ from calibre_plugins.libgen_store.config import (
     PLUGIN_VERSION_STR,
     get_fastest_cdns,
 )
-from calibre_plugins.libgen_store.scraper import LibgenScraper
+from calibre_plugins.libgen_store.scraper import LibgenScraper, LibgenBook
+
+
+def serialize_book(book):
+    return {
+        "id": getattr(book, "id", "") or "",
+        "md5": getattr(book, "md5", "") or "",
+        "title": getattr(book, "title", "") or "",
+        "author": getattr(book, "author", "") or "",
+        "publisher": getattr(book, "publisher", "") or "",
+        "year": getattr(book, "year", "") or "",
+        "language": getattr(book, "language", "") or "",
+        "pages": getattr(book, "pages", "") or "",
+        "size": getattr(book, "size", "") or "",
+        "extension": getattr(book, "extension", "") or "",
+        "detail_url": getattr(book, "detail_url", "") or "",
+        "download_url": getattr(book, "download_url", "") or "",
+        "cover_url": getattr(book, "cover_url", "") or "",
+    }
+
+
+def deserialize_book(d):
+    b = LibgenBook()
+    for k, v in d.items():
+        setattr(b, k, v)
+    return b
 
 
 def sanitize_filename(name):
@@ -653,6 +678,7 @@ class LibgenDialog(QDialog):
 
         self._setup_ui()
         self.populate_mirrors_table()
+        self.load_queue()
 
     def _setup_ui(self):
         base_layout = QHBoxLayout(self)
@@ -1425,10 +1451,39 @@ class LibgenDialog(QDialog):
         self.queue_selected_results()
         self.start_bulk_download()
 
+    def save_queue(self):
+        saved = []
+        for q in self.queue_items:
+            bk = q.get("book")
+            if bk:
+                saved.append({
+                    "book": serialize_book(bk),
+                    "status": q.get("status", "Queued"),
+                    "progress": q.get("progress", 0),
+                    "dest_file": q.get("dest_file", ""),
+                })
+        prefs["saved_queue_items"] = saved
+
+    def load_queue(self):
+        self.queue_items = []
+        saved = prefs.get("saved_queue_items", [])
+        if not isinstance(saved, list):
+            return
+        for item in saved:
+            b_dict = item.get("book")
+            if b_dict and isinstance(b_dict, dict):
+                self.queue_items.append({
+                    "book": deserialize_book(b_dict),
+                    "status": item.get("status", "Queued"),
+                    "progress": item.get("progress", 0),
+                    "dest_file": item.get("dest_file", ""),
+                })
+        if self.queue_items:
+            self.update_queue_table()
+
     def update_queue_table(self):
-        self.queue_table.setRowCount(0)
+        self.queue_table.setRowCount(len(self.queue_items))
         for row, q in enumerate(self.queue_items):
-            self.queue_table.insertRow(row)
             book = q["book"]
             self.queue_table.setItem(row, 0, QTableWidgetItem(book.title))
             self.queue_table.setItem(row, 1, QTableWidgetItem(book.author))
@@ -1450,6 +1505,7 @@ class LibgenDialog(QDialog):
 
         self.tabs.setTabText(1, f"Bulk Queue ({len(self.queue_items)})")
         self.apply_queue_filter()
+        self.save_queue()
 
     def set_queue_filter(self, mode):
         self.queue_filter_mode = mode
@@ -2125,6 +2181,7 @@ class LibgenDialog(QDialog):
             prefs["selected_mirror"] = m_text
         prefs["dialog_width"] = self.width()
         prefs["dialog_height"] = self.height()
+        self.save_queue()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

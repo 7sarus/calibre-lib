@@ -174,7 +174,7 @@ class LibgenScraper:
                     search_url = f"{mirror}/search.php?req={encoded_query}&column={col}&res={fetch_count}"
                 else:
                     field_param = f"&columns%5B%5D={search_field}" if search_field else ""
-                    topic_param = f"&topics%5B%5D={category}" if category else ""
+                    topic_param = f"&topics%5B%5D={category}" if category else "&topics%5B%5D=l&topics%5B%5D=f"
                     search_url = f"{mirror}/index.php?req={encoded_query}{field_param}{topic_param}&res={fetch_count}"
 
                 resp = b.open(search_url, timeout=self.timeout)
