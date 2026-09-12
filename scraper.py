@@ -172,7 +172,6 @@ class LibgenScraper:
 
         books = []
         collected_books = []
-        seen_keys = set()
         winning_mirror = ""
         mirrors_done = 0
 
@@ -188,7 +187,8 @@ class LibgenScraper:
                 except Exception:
                     pass
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(total_mirrors, 5)) as pool:
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=min(total_mirrors, 5))
+        try:
             futures = {pool.submit(_search_mirror, m): m for m in clean_mirrors}
             for fut in concurrent.futures.as_completed(futures):
                 if abort_check and abort_check():
@@ -207,17 +207,14 @@ class LibgenScraper:
                             except Exception:
                                 pass
 
-                        for b in candidates:
-                            clean_title = re.sub(r'[\W_]+', '', (b.title or "").lower())
-                            clean_author = re.sub(r'[\W_]+', '', (b.author or "").lower())
-                            ext = (b.extension or "").lower()
-                            key = (clean_title, clean_author, ext) if unique_results else id(b)
-                            if key not in seen_keys:
-                                seen_keys.add(key)
-                                collected_books.append(b)
+                        collected_books.extend(candidates)
 
+                        # Filter for unique if applied
+                        processed_books = self._deduplicate_books(collected_books, preferred_format) if unique_results else list(collected_books)
+
+                        # Filter and rank based on language, format preferences, and query relevance
                         ranked_current = self._filter_and_rank(
-                            collected_books,
+                            processed_books,
                             preferred_language=preferred_language,
                             preferred_format=preferred_format,
                             filter_mode=filter_mode,
@@ -232,8 +229,9 @@ class LibgenScraper:
                             books = ranked_current[:max_results]
                             break
                     else:
+                        processed_books = self._deduplicate_books(collected_books, preferred_format) if unique_results else list(collected_books)
                         ranked_current = self._filter_and_rank(
-                            collected_books,
+                            processed_books,
                             preferred_language=preferred_language,
                             preferred_format=preferred_format,
                             filter_mode=filter_mode,
@@ -245,10 +243,16 @@ class LibgenScraper:
 
                 if found_event.is_set():
                     break
+        finally:
+            try:
+                pool.shutdown(wait=False, cancel_futures=True)
+            except TypeError:
+                pool.shutdown(wait=False)
 
         if not books and collected_books:
+            processed_books = self._deduplicate_books(collected_books, preferred_format) if unique_results else list(collected_books)
             ranked_current = self._filter_and_rank(
-                collected_books,
+                processed_books,
                 preferred_language=preferred_language,
                 preferred_format=preferred_format,
                 filter_mode=filter_mode,
@@ -388,23 +392,35 @@ class LibgenScraper:
 
         return books
 
-    def _deduplicate_books(self, books):
+    def _deduplicate_books(self, books, preferred_format="Any"):
         """
-        Deduplicates books by normalized (title, author, extension).
-        Preserves the first/best occurrences.
+        Deduplicates books by normalized (title, author, language).
+        Strips series/bracket noise so duplicate uploads of the same book are merged.
+        Preserves the preferred format or first occurrence.
         """
-        seen = set()
-        unique = []
+        seen = {}
+        pref_fmt = (preferred_format or "").strip().upper()
+
         for b in books:
-            clean_title = re.sub(r'[\W_]+', '', (b.title or "").lower())
+            raw_title = (b.title or "").lower()
+            clean_title = re.sub(r'\[.*?\]|\(.*?\)', '', raw_title)
+            clean_title = re.sub(r'[\W_]+', '', clean_title)
+            if not clean_title:
+                clean_title = re.sub(r'[\W_]+', '', raw_title)
+
             clean_author = re.sub(r'[\W_]+', '', (b.author or "").lower())
-            ext = (b.extension or "").lower()
-            key = (clean_title, clean_author, ext)
-            if key in seen:
-                continue
-            seen.add(key)
-            unique.append(b)
-        return unique
+            lang = (b.language or "").lower()
+            key = (clean_title, clean_author, lang)
+
+            if key not in seen:
+                seen[key] = b
+            else:
+                existing = seen[key]
+                if pref_fmt and pref_fmt != "ANY":
+                    if b.extension == pref_fmt and existing.extension != pref_fmt:
+                        seen[key] = b
+
+        return list(seen.values())
 
     def _filter_and_rank(self, books, preferred_language, preferred_format, filter_mode, query=""):
         """
