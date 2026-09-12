@@ -106,6 +106,32 @@ def remove_custom_mirror(url):
     custom = [m for m in prefs.get("custom_mirrors", []) if m.rstrip("/") != url]
     prefs["custom_mirrors"] = custom
 
+def discard_mirrors(urls_to_discard):
+    """Removes the given URLs from primary, fallback, custom, and last_successful mirrors."""
+    discard_set = set(u.strip().rstrip("/") for u in urls_to_discard if u)
+    if not discard_set:
+        return
+
+    # 1. Custom mirrors
+    custom = [m for m in prefs.get("custom_mirrors", []) if m.rstrip("/") not in discard_set]
+    prefs["custom_mirrors"] = custom
+
+    # 2. Fallbacks
+    fallback_str = prefs.get("fallback_mirrors", "")
+    fallbacks = [m.strip().rstrip("/") for m in fallback_str.split(",") if m.strip() and m.strip().rstrip("/") not in discard_set]
+    prefs["fallback_mirrors"] = ", ".join(fallbacks)
+
+    # 3. Last successful
+    last_succ = prefs.get("last_successful_mirror", "").strip().rstrip("/")
+    if last_succ in discard_set:
+        prefs["last_successful_mirror"] = ""
+
+    # 4. Primary mirror
+    primary = prefs.get("primary_mirror", "").strip().rstrip("/")
+    if primary in discard_set:
+        remaining = fallbacks + custom
+        prefs["primary_mirror"] = remaining[0] if remaining else "https://libgen.li"
+
 def set_mirror_order(sorted_mirrors):
     """Updates mirror order in prefs, setting fastest as primary and others as fallbacks."""
     if not sorted_mirrors:
