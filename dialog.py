@@ -43,6 +43,7 @@ from qt.core import (
     QSpinBox,
     QStandardItem,
     QStandardItemModel,
+    QCompleter,
 )
 
 
@@ -60,6 +61,9 @@ from calibre_plugins.libgen_store.config import (
     discard_mirrors,
     PLUGIN_VERSION_STR,
     get_fastest_cdns,
+    append_search_history,
+    get_search_history,
+    get_search_history_filepath,
 )
 from calibre_plugins.libgen_store.scraper import LibgenScraper, LibgenBook
 
@@ -803,12 +807,21 @@ class LibgenDialog(QDialog):
         self.unique_checkbox.setChecked(bool(prefs.get("unique_results", True)))
         self.unique_checkbox.stateChanged.connect(self.save_all_field_preferences)
         row2.addWidget(self.unique_checkbox)
+
+        self.history_checkbox = QCheckBox("History", self)
+        self.history_checkbox.setToolTip(
+            f"Opt-in: Save search queries to local file and enable autocomplete ({get_search_history_filepath()})"
+        )
+        self.history_checkbox.setChecked(bool(prefs.get("save_search_history", False)))
+        self.history_checkbox.stateChanged.connect(self.on_history_toggled)
+        row2.addWidget(self.history_checkbox)
         
         row2.addStretch(1)
 
         top_panel.addLayout(row1)
         top_panel.addLayout(row2)
         main_layout.addLayout(top_panel)
+        self.setup_search_completer()
 
         # Tabs: Search Results, Queue, and Mirrors/Health
         self.tabs = QTabWidget(self)
@@ -1267,11 +1280,37 @@ class LibgenDialog(QDialog):
         self.cover_label.setText('<div align="center" style="font-family: sans-serif;"><div style="font-size: 26px; margin-bottom: 6px; color: #555;">📁</div><div style="font-size: 12px; color: #777;">No Cover Available</div></div>')
         self.cover_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444;")
 
+    def setup_search_completer(self):
+        """Sets up or clears QCompleter based on whether local search history is enabled."""
+        if hasattr(self, "search_input") and prefs.get("save_search_history", False):
+            history = get_search_history()
+            if history:
+                seen = set()
+                unique_hist = []
+                for q in reversed(history):
+                    if q not in seen:
+                        seen.add(q)
+                        unique_hist.append(q)
+                completer = QCompleter(unique_hist, self)
+                completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+                self.search_input.setCompleter(completer)
+                return
+        if hasattr(self, "search_input"):
+            self.search_input.setCompleter(None)
+
+    def on_history_toggled(self, state):
+        if hasattr(self, "history_checkbox"):
+            prefs["save_search_history"] = self.history_checkbox.isChecked()
+            self.setup_search_completer()
+
     # --- Search Handlers ---
     def start_search(self):
         query = self.search_input.text().strip()
         if not query:
             return
+
+        append_search_history(query)
+        self.setup_search_completer()
 
         self.search_btn.setVisible(False)
         self.stop_search_btn.setVisible(True)
@@ -1422,6 +1461,7 @@ class LibgenDialog(QDialog):
             return
 
         added_count = 0
+        queued_urls = set()
         for r in selected_rows:
             if r < len(self.search_results):
                 book = self.search_results[r]
@@ -1432,6 +1472,13 @@ class LibgenDialog(QDialog):
                         "status": "Queued",
                     })
                     added_count += 1
+                queued_urls.add(book.detail_url)
+
+        # Immediately remove queued items from search results
+        if queued_urls:
+            self.search_results = [b for b in self.search_results if b.detail_url not in queued_urls]
+            self.populate_results_table()
+            self.tabs.setTabText(0, f"Search Results ({len(self.search_results)})")
 
         self.update_queue_table()
         if added_count > 0:
@@ -2182,6 +2229,8 @@ class LibgenDialog(QDialog):
             prefs["filter_mode"] = self.filter_combo.currentText().strip()
         if hasattr(self, "unique_checkbox"):
             prefs["unique_results"] = self.unique_checkbox.isChecked()
+        if hasattr(self, "history_checkbox"):
+            prefs["save_search_history"] = self.history_checkbox.isChecked()
         if hasattr(self, "fast_mode_checkbox"):
             prefs["fast_mode"] = self.fast_mode_checkbox.isChecked()
         if hasattr(self, "max_results_spinbox"):

@@ -5,6 +5,7 @@
 Configuration settings and preferences UI for the LibGen Store plugin.
 """
 
+import os
 from calibre.utils.config import JSONConfig
 from qt.core import (
     QWidget,
@@ -15,6 +16,7 @@ from qt.core import (
     QSpinBox,
     QLabel,
     QGroupBox,
+    QCheckBox,
 )
 
 # Plugin Version definitions
@@ -46,6 +48,7 @@ prefs.defaults["fastest_cdns"] = {}
 prefs.defaults["unique_results"] = True
 prefs.defaults["fast_mode"] = False
 prefs.defaults["preferred_languages"] = ["Any"]
+prefs.defaults["save_search_history"] = False
 
 SEARCH_FIELDS = {
     "All Fields": "",
@@ -165,7 +168,51 @@ def get_fastest_cdns():
     cdns = prefs.get("fastest_cdns", {})
     if not isinstance(cdns, dict):
         return []
-    return sorted(cdns.items(), key=lambda item: item[1], reverse=True)
+def get_search_history_filepath():
+    """Returns absolute path to local search history file."""
+    try:
+        from calibre.utils.config import config_dir
+        target_dir = os.path.join(config_dir, "plugins")
+        os.makedirs(target_dir, exist_ok=True)
+        return os.path.join(target_dir, "libgen_search_history.txt")
+    except Exception:
+        return os.path.expanduser("~/.calibre_libgen_history.txt")
+
+
+def append_search_history(query):
+    """Appends query to local search history file if enabled, avoiding consecutive duplicates."""
+    if not query or not query.strip():
+        return
+    query = query.strip()
+    if not prefs.get("save_search_history", False):
+        return
+    filepath = get_search_history_filepath()
+    try:
+        last_line = None
+        if os.path.exists(filepath):
+            with open(filepath, "r", encoding="utf-8") as f:
+                lines = [l.strip() for l in f if l.strip()]
+                if lines:
+                    last_line = lines[-1]
+        if last_line != query:
+            with open(filepath, "a", encoding="utf-8") as f:
+                f.write(query + "\n")
+    except Exception:
+        pass
+
+
+def get_search_history():
+    """Reads historical search queries from local file."""
+    if not prefs.get("save_search_history", False):
+        return []
+    filepath = get_search_history_filepath()
+    try:
+        if os.path.exists(filepath):
+            with open(filepath, "r", encoding="utf-8") as f:
+                return [l.strip() for l in f if l.strip()]
+    except Exception:
+        pass
+    return []
 
 
 SUPPORTED_LANGUAGES = [
@@ -269,6 +316,12 @@ class ConfigWidget(QWidget):
         self.max_results_spin.setValue(int(prefs.get("max_results", 5)))
         filter_layout.addRow("Max Results per Search:", self.max_results_spin)
 
+        # Search Query History (Opt-in)
+        self.save_history_checkbox = QCheckBox("Save search query history to local file", self)
+        self.save_history_checkbox.setChecked(bool(prefs.get("save_search_history", False)))
+        self.save_history_checkbox.setToolTip(f"Preserves searched queries locally in {get_search_history_filepath()}")
+        filter_layout.addRow("Search History:", self.save_history_checkbox)
+
         self.layout.addWidget(filter_group)
 
         # Informational note
@@ -288,4 +341,5 @@ class ConfigWidget(QWidget):
         prefs["preferred_format"] = self.format_combo.currentText().strip().upper()
         prefs["filter_mode"] = self.filter_mode_combo.currentText().strip()
         prefs["max_results"] = self.max_results_spin.value()
+        prefs["save_search_history"] = self.save_history_checkbox.isChecked()
 
