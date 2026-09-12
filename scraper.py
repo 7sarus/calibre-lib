@@ -9,7 +9,7 @@ import os
 import shutil
 import threading
 import concurrent.futures
-from urllib.parse import urljoin, quote_plus
+from urllib.parse import urljoin, quote_plus, urlparse
 from bs4 import BeautifulSoup
 from calibre import browser
 
