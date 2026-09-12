@@ -43,6 +43,9 @@ prefs.defaults["last_successful_mirror"] = ""
 prefs.defaults["max_results"] = 5
 prefs.defaults["show_download_stats"] = False
 prefs.defaults["fastest_cdns"] = {}
+prefs.defaults["unique_results"] = True
+prefs.defaults["fast_mode"] = False
+prefs.defaults["preferred_languages"] = ["Any"]
 
 SEARCH_FIELDS = {
     "All Fields": "",
