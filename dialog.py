@@ -482,12 +482,13 @@ class BulkDownloadWorker(QThread):
 class ReviewImportDialog(QDialog):
     """Review modal presented after download completion or abortion to select books for Calibre import."""
 
-    def __init__(self, downloaded_items, is_aborted=False, parent=None):
+    def __init__(self, downloaded_items, is_aborted=False, stats_summary=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Review Downloaded Books for Import")
         self.resize(760, 420)
         self.downloaded_items = downloaded_items
         self.is_aborted = is_aborted
+        self.stats_summary = stats_summary or {}
         self.approved_items = []
 
         layout = QVBoxLayout(self)
@@ -497,6 +498,18 @@ class ReviewImportDialog(QDialog):
             f"{status_prefix}{len(downloaded_items)} book(s) were successfully downloaded.<br>"
             "Review and choose which books to import into your Calibre library:"
         )
+        if self.stats_summary:
+            s = self.stats_summary
+            cdn_str = ""
+            if s.get("fastest_cdns"):
+                top_cdn, top_speed = s["fastest_cdns"][0]
+                cdn_str = f" &nbsp;|&nbsp; 🚀 CDN: <b>{top_cdn}</b> ({top_speed:.1f} KB/s)"
+            info_text += (
+                f"<br><span style='color: #7bd88f; font-size: 12px; font-weight: normal;'>"
+                f"⏱ Time: <b>{s.get('time_str', '-')}</b> &nbsp;|&nbsp; "
+                f"📦 Data: <b>{s.get('size_str', '-')}</b> &nbsp;|&nbsp; "
+                f"⚡ Avg Speed: <b>{s.get('speed_str', '-')}</b>{cdn_str}</span>"
+            )
         banner = QLabel(info_text, self)
         banner.setWordWrap(True)
         banner.setStyleSheet(
@@ -613,8 +626,8 @@ class LibgenDialog(QDialog):
         self.cover_anim_timer.timeout.connect(self.update_cover_animation)
         self.cover_anim_frame = 0
 
-        # Hidden download stats toggle (enabled by triple-clicking version badge)
-        self.show_stats = bool(prefs.get("show_download_stats", False))
+        # Download stats toggle (toggled by triple-clicking version badge)
+        self.show_stats = bool(prefs.get("show_download_stats", True))
         self.version_click_count = 0
         self.version_click_timer = QTimer(self)
         self.version_click_timer.setInterval(1200)
@@ -1910,9 +1923,16 @@ class LibgenDialog(QDialog):
             f"{cdn_section}\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         )
-        if self.show_stats:
-            self.append_log(stats_box)
-            self.side_mirror_status.appendPlainText(f"[STATS] {len(downloaded_items)} dl, {size_str} @ {speed_str} in {time_str}")
+        # Always log stats box to Live Log and side mirror status
+        self.append_log(stats_box)
+        self.side_mirror_status.appendPlainText(f"[STATS] {len(downloaded_items)} dl, {size_str} @ {speed_str} in {time_str}")
+
+        stats_summary = {
+            "time_str": time_str,
+            "size_str": size_str,
+            "speed_str": speed_str,
+            "fastest_cdns": fastest_cdns,
+        }
 
         summary_dialog_msg = (
             f"Bulk download completed.\n\n"
@@ -1926,27 +1946,21 @@ class LibgenDialog(QDialog):
 
         if not downloaded_items:
             if is_aborted:
+                self.status_label.setText(f"Aborted ({time_str}): 0 downloaded.")
                 if self.show_stats:
-                    self.status_label.setText(f"Aborted ({time_str}): 0 downloaded.")
                     QMessageBox.information(self, "Download Aborted", f"Downloads were stopped by user.\n\n{summary_dialog_msg}")
-                else:
-                    self.status_label.setText("Aborted: 0 downloaded.")
             else:
+                self.status_label.setText(f"Failed ({time_str}): {fail_count} failed.")
                 if self.show_stats:
-                    self.status_label.setText(f"Failed ({time_str}): {fail_count} failed.")
                     QMessageBox.warning(self, "Download Failed", f"All downloads failed.\n\n{summary_dialog_msg}")
-                else:
-                    self.status_label.setText(f"Failed: {fail_count} failed.")
             return
 
+        self.status_label.setText(f"Completed: {len(downloaded_items)} downloaded ({size_str} @ {speed_str}) in {time_str}")
         if self.show_stats:
-            self.status_label.setText(f"Completed: {len(downloaded_items)} downloaded ({size_str} @ {speed_str}) in {time_str}")
             QMessageBox.information(self, "Bulk Download Summary", summary_dialog_msg)
-        else:
-            self.status_label.setText(f"Completed: {len(downloaded_items)} downloaded.")
 
         # Present Review modal dialog to user
-        review_dlg = ReviewImportDialog(downloaded_items, is_aborted=is_aborted, parent=self)
+        review_dlg = ReviewImportDialog(downloaded_items, is_aborted=is_aborted, stats_summary=stats_summary, parent=self)
         if review_dlg.exec() == QDialog.DialogCode.Accepted and review_dlg.approved_items:
             approved = review_dlg.approved_items
             file_paths = [it["file_path"] for it in approved]
