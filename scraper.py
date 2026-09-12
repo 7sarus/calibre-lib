@@ -171,8 +171,22 @@ class LibgenScraper:
             return None, mirror
 
         books = []
+        collected_books = []
+        seen_keys = set()
         winning_mirror = ""
         mirrors_done = 0
+
+        def _notify_progress(mirror, current_found):
+            if progress_callback:
+                try:
+                    progress_callback(mirrors_done, total_mirrors, mirror, current_found, max_results)
+                except TypeError:
+                    try:
+                        progress_callback(mirrors_done, total_mirrors, mirror)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(total_mirrors, 5)) as pool:
             futures = {pool.submit(_search_mirror, m): m for m in clean_mirrors}
@@ -180,20 +194,67 @@ class LibgenScraper:
                 if abort_check and abort_check():
                     raise Exception("Search stopped by user")
                 mirrors_done += 1
-                if progress_callback:
-                    progress_callback(mirrors_done, total_mirrors, futures[fut])
+                curr_mirror = futures[fut]
+
                 try:
-                    result, mirror = fut.result()
-                    if result and not books:
-                        books = result
-                        winning_mirror = mirror
-                        try:
-                            from calibre_plugins.libgen_store.config import record_successful_mirror
-                            record_successful_mirror(mirror)
-                        except Exception:
-                            pass
+                    candidates, mirror = fut.result()
+                    if candidates:
+                        if not winning_mirror:
+                            winning_mirror = mirror
+                            try:
+                                from calibre_plugins.libgen_store.config import record_successful_mirror
+                                record_successful_mirror(mirror)
+                            except Exception:
+                                pass
+
+                        for b in candidates:
+                            clean_title = re.sub(r'[\W_]+', '', (b.title or "").lower())
+                            clean_author = re.sub(r'[\W_]+', '', (b.author or "").lower())
+                            ext = (b.extension or "").lower()
+                            key = (clean_title, clean_author, ext) if unique_results else id(b)
+                            if key not in seen_keys:
+                                seen_keys.add(key)
+                                collected_books.append(b)
+
+                        ranked_current = self._filter_and_rank(
+                            collected_books,
+                            preferred_language=preferred_language,
+                            preferred_format=preferred_format,
+                            filter_mode=filter_mode,
+                            query=query,
+                        )
+                        current_match_count = len(ranked_current)
+                        _notify_progress(mirror, min(current_match_count, max_results))
+
+                        # Return immediately when the matched number is found!
+                        if current_match_count >= max_results:
+                            found_event.set()
+                            books = ranked_current[:max_results]
+                            break
+                    else:
+                        ranked_current = self._filter_and_rank(
+                            collected_books,
+                            preferred_language=preferred_language,
+                            preferred_format=preferred_format,
+                            filter_mode=filter_mode,
+                            query=query,
+                        )
+                        _notify_progress(curr_mirror, min(len(ranked_current), max_results))
                 except Exception:
                     pass
+
+                if found_event.is_set():
+                    break
+
+        if not books and collected_books:
+            ranked_current = self._filter_and_rank(
+                collected_books,
+                preferred_language=preferred_language,
+                preferred_format=preferred_format,
+                filter_mode=filter_mode,
+                query=query,
+            )
+            books = ranked_current[:max_results]
 
         # If targeted field query (e.g. Series 's', Title 't') returned 0 results, cascade to All Fields
         if not books and search_field and auto_field_fallback:
@@ -212,23 +273,7 @@ class LibgenScraper:
                 auto_field_fallback=False,
             )
 
-        if not books:
-            return []
-
-        # Deduplicate books if unique_results is enabled
-        if unique_results:
-            books = self._deduplicate_books(books)
-
-        # Filter and rank books based on language, format preferences, and query relevance
-        filtered_books = self._filter_and_rank(
-            books,
-            preferred_language=preferred_language,
-            preferred_format=preferred_format,
-            filter_mode=filter_mode,
-            query=query,
-        )
-
-        return filtered_books[:max_results]
+        return books
 
     def _parse_search_page(self, soup, mirror):
         """

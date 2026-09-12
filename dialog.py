@@ -162,7 +162,7 @@ class CheckableComboBox(QComboBox):
 class SearchWorker(QThread):
     finished_signal = pyqtSignal(list, str)   # books, mirror_used
     error_signal = pyqtSignal(str)
-    progress_signal = pyqtSignal(int, int, str)  # current_idx, total_mirrors, mirror_url
+    progress_signal = pyqtSignal(int, int, str, int, int)  # current_idx, total_mirrors, mirror_url, found_count, target_count
 
     def __init__(self, query, search_field, category, selected_mirror, language, fmt, filter_mode, max_results=5, unique_results=True, parent=None):
         super().__init__(parent)
@@ -188,9 +188,9 @@ class SearchWorker(QThread):
 
             scraper = LibgenScraper(mirrors=mirrors, timeout=timeout)
 
-            def on_progress(idx, total, mirror):
+            def on_progress(idx, total, mirror, found_count=0, target_count=0):
                 self._current_mirror = mirror
-                self.progress_signal.emit(idx, total, mirror)
+                self.progress_signal.emit(idx, total, mirror, found_count, target_count)
 
             books = scraper.search(
                 query=self.query,
@@ -1283,15 +1283,17 @@ class LibgenDialog(QDialog):
         self.search_btn.setVisible(True)
         self.search_btn.setEnabled(True)
 
-    def on_search_progress(self, idx, total, mirror):
+    def on_search_progress(self, idx, total, mirror, found_count=0, target_count=0):
         from urllib.parse import urlparse
         host = urlparse(mirror).netloc or mirror
         percent = int(((idx - 1) / total) * 100) if total > 0 else 0
-        fmt_text = f"Mirror {idx}/{total} ({percent}%)"
 
+        if target_count > 0:
+            msg = f"Querying mirrors [{idx}/{total}] • 📦 {found_count}/{target_count} artifacts found ({host})"
+            self.tabs.setTabText(0, f"Search Results ({found_count})")
+        else:
+            msg = f"Querying mirror [{idx}/{total}]: {host} ({mirror})"
 
-
-        msg = f"Querying mirror [{idx}/{total}]: {host} ({mirror})"
         self.status_label.setText(msg)
         self.status_label.setToolTip(mirror)
         self.search_mirror_label.setText(msg)
@@ -1302,10 +1304,9 @@ class LibgenDialog(QDialog):
         self.search_btn.setEnabled(True)
         self.stop_search_btn.setVisible(False)
 
-
         from urllib.parse import urlparse
         host = urlparse(mirror_used).netloc if mirror_used else "mirror"
-        success_text = f"✓ Found {len(books)} books via {host}." if mirror_used else f"✓ Found {len(books)} books."
+        success_text = f"✓ Found {len(books)} artifacts via {host}." if mirror_used else f"✓ Found {len(books)} artifacts."
         self.status_label.setText(success_text)
         self.search_mirror_label.setText(success_text)
         self.tabs.setTabText(0, f"Search Results ({len(books)})")
