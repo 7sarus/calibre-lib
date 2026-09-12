@@ -54,6 +54,7 @@ from calibre_plugins.libgen_store.config import (
     add_custom_mirror,
     remove_custom_mirror,
     PLUGIN_VERSION_STR,
+    get_fastest_cdns,
 )
 from calibre_plugins.libgen_store.scraper import LibgenScraper
 
@@ -525,6 +526,14 @@ class LibgenDialog(QDialog):
         self.cover_anim_timer.timeout.connect(self.update_cover_animation)
         self.cover_anim_frame = 0
 
+        # Hidden download stats toggle (enabled by triple-clicking version badge)
+        self.show_stats = bool(prefs.get("show_download_stats", False))
+        self.version_click_count = 0
+        self.version_click_timer = QTimer(self)
+        self.version_click_timer.setInterval(1200)
+        self.version_click_timer.setSingleShot(True)
+        self.version_click_timer.timeout.connect(self._reset_version_clicks)
+
         self._setup_ui()
         self.populate_mirrors_table()
 
@@ -645,8 +654,7 @@ class LibgenDialog(QDialog):
         row2.addWidget(QLabel("Max:"))
         self.max_results_spinbox = QSpinBox(self)
         self.max_results_spinbox.setRange(1, 1000)
-        self.max_results_spinbox.setValue(int(prefs.get("max_results", 5)))
-        self.max_results_spinbox.valueChanged.connect(self.save_all_field_preferences)
+        self.max_results_spinbox.setValue(5)
         row2.addWidget(self.max_results_spinbox)
         
         row2.addStretch(1)
@@ -861,12 +869,45 @@ class LibgenDialog(QDialog):
         self.neko_frame_idx = 0
         self.neko_timer.start(400)
 
-        # Version Badge in Status Bar
+        # Version Badge in Status Bar (Click 3x to toggle hidden download stats)
         self.version_badge = QLabel(PLUGIN_VERSION_STR, self)
-        self.version_badge.setStyleSheet("color: #888; font-size: 11px; padding: 2px 6px; background-color: #242424; border: 1px solid #3d3d3d; border-radius: 3px;")
+        self.version_badge.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.version_badge.mousePressEvent = self.on_version_badge_clicked
+        self._update_version_badge_style()
         status_bar.addWidget(self.version_badge)
 
         main_layout.addLayout(status_bar)
+
+    def _reset_version_clicks(self):
+        self.version_click_count = 0
+
+    def on_version_badge_clicked(self, event):
+        self.version_click_count += 1
+        self.version_click_timer.start()
+        if self.version_click_count >= 3:
+            self.version_click_count = 0
+            self.version_click_timer.stop()
+            self.show_stats = not self.show_stats
+            prefs["show_download_stats"] = self.show_stats
+            self._update_version_badge_style()
+            status_msg = "enabled" if self.show_stats else "disabled"
+            self.status_label.setText(f"Download statistics {status_msg}.")
+            self.append_log(f"[CONFIG] Download statistics {status_msg} (toggled via version badge).")
+
+    def _update_version_badge_style(self):
+        if not hasattr(self, "version_badge"):
+            return
+        if self.show_stats:
+            self.version_badge.setStyleSheet(
+                "color: #4ade80; font-size: 11px; padding: 2px 6px; background-color: #1a2e1f; border: 1px solid #22c55e; border-radius: 3px; font-weight: bold;"
+            )
+            self.version_badge.setToolTip("Download statistics enabled (Click 3x to disable)")
+        else:
+            self.version_badge.setStyleSheet(
+                "color: #888; font-size: 11px; padding: 2px 6px; background-color: #242424; border: 1px solid #3d3d3d; border-radius: 3px;"
+            )
+            self.version_badge.setToolTip("Version info (Click 3x to toggle download statistics)")
+
     def manual_fetch_mirrors(self):
         self.fetch_mirrors_btn.setEnabled(False)
         self.fetch_mirrors_btn.setText("Fetching...")
@@ -1644,6 +1685,17 @@ class LibgenDialog(QDialog):
         else:
             speed_str = "0 KB/s"
 
+        fastest_cdns = get_fastest_cdns()
+        if fastest_cdns:
+            self.side_mirror_status.appendPlainText("[FASTEST CDNs] " + ", ".join(f"{h} ({s:.1f} KB/s)" for h, s in fastest_cdns[:3]))
+
+        cdn_section = ""
+        cdn_summary = ""
+        if fastest_cdns:
+            cdn_lines = "\n".join(f"    • {h}: {s:.1f} KB/s" for h, s in fastest_cdns[:3])
+            cdn_section = f"\n  ⚡ Fastest CDNs:\n{cdn_lines}"
+            cdn_summary = "\n\nFastest CDNs:\n" + "\n".join(f"• {h}: {s:.1f} KB/s" for h, s in fastest_cdns[:3])
+
         # Formatted statistics banner
         stats_box = (
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -1653,11 +1705,13 @@ class LibgenDialog(QDialog):
             f"  ✗ Failed:        {fail_count} item(s)\n"
             f"  ⏱ Elapsed Time:  {time_str}\n"
             f"  📦 Total Data:    {size_str}\n"
-            f"  ⚡ Avg Bandwidth: {speed_str}\n"
+            f"  ⚡ Avg Bandwidth: {speed_str}"
+            f"{cdn_section}\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         )
-        self.append_log(stats_box)
-        self.side_mirror_status.appendPlainText(f"[STATS] {len(downloaded_items)} dl, {size_str} @ {speed_str} in {time_str}")
+        if self.show_stats:
+            self.append_log(stats_box)
+            self.side_mirror_status.appendPlainText(f"[STATS] {len(downloaded_items)} dl, {size_str} @ {speed_str} in {time_str}")
 
         summary_dialog_msg = (
             f"Bulk download completed.\n\n"
@@ -1666,19 +1720,29 @@ class LibgenDialog(QDialog):
             f"• Elapsed Time:   {time_str}\n"
             f"• Total Data:     {size_str}\n"
             f"• Avg Bandwidth:  {speed_str}"
+            f"{cdn_summary}"
         )
 
         if not downloaded_items:
             if is_aborted:
-                self.status_label.setText(f"Aborted ({time_str}): 0 downloaded.")
-                QMessageBox.information(self, "Download Aborted", f"Downloads were stopped by user.\n\n{summary_dialog_msg}")
+                if self.show_stats:
+                    self.status_label.setText(f"Aborted ({time_str}): 0 downloaded.")
+                    QMessageBox.information(self, "Download Aborted", f"Downloads were stopped by user.\n\n{summary_dialog_msg}")
+                else:
+                    self.status_label.setText("Aborted: 0 downloaded.")
             else:
-                self.status_label.setText(f"Failed ({time_str}): {fail_count} failed.")
-                QMessageBox.warning(self, "Download Failed", f"All downloads failed.\n\n{summary_dialog_msg}")
+                if self.show_stats:
+                    self.status_label.setText(f"Failed ({time_str}): {fail_count} failed.")
+                    QMessageBox.warning(self, "Download Failed", f"All downloads failed.\n\n{summary_dialog_msg}")
+                else:
+                    self.status_label.setText(f"Failed: {fail_count} failed.")
             return
 
-        self.status_label.setText(f"Completed: {len(downloaded_items)} downloaded ({size_str} @ {speed_str}) in {time_str}")
-        QMessageBox.information(self, "Bulk Download Summary", summary_dialog_msg)
+        if self.show_stats:
+            self.status_label.setText(f"Completed: {len(downloaded_items)} downloaded ({size_str} @ {speed_str}) in {time_str}")
+            QMessageBox.information(self, "Bulk Download Summary", summary_dialog_msg)
+        else:
+            self.status_label.setText(f"Completed: {len(downloaded_items)} downloaded.")
 
         # Present Review modal dialog to user
         review_dlg = ReviewImportDialog(downloaded_items, is_aborted=is_aborted, parent=self)
