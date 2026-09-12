@@ -146,13 +146,25 @@ class LibgenScraper:
         # Concurrent first-result-wins: fire searches to all mirrors, return first success
         found_event = threading.Event()
 
+        if isinstance(preferred_language, (list, tuple, set)):
+            pref_langs = [str(l).strip().lower() for l in preferred_language if str(l).strip()]
+        else:
+            pref_langs = [l.strip().lower() for l in (preferred_language or "").split(",") if l.strip()]
+        has_lang_filter = bool(pref_langs) and ("any" not in pref_langs)
+
+        def book_matches_lang(b):
+            if not has_lang_filter:
+                return True
+            return any(l in (b.language or "").lower() for l in pref_langs)
+
+        # When language or format filtering is active, fetch more rows to ensure ample matching candidates
+        fetch_count = max(max_results * 15, 100) if (has_lang_filter or (preferred_format and preferred_format != "Any")) else max(max_results * 4, 25)
+
         def _search_mirror(mirror):
             if found_event.is_set() or (abort_check and abort_check()):
                 return None, mirror
             try:
                 b = self._get_browser()
-                # Request 4x max_results so deduplication and language filtering have ample candidates
-                fetch_count = max(max_results * 4, 25)
 
                 # Protocol schema detection: classic mirrors (libgen.is/rs/st) vs modern LibGen Plus (libgen.li/bz/la/gl/vg)
                 is_classic = any(h in mirror.lower() for h in ["libgen.is", "libgen.rs", "libgen.st"])
@@ -172,7 +184,6 @@ class LibgenScraper:
                 soup = BeautifulSoup(html, HTML_PARSER)
                 result = self._parse_search_page(soup, mirror)
                 if result:
-                    found_event.set()
                     return result, mirror
             except Exception:
                 pass
@@ -229,13 +240,14 @@ class LibgenScraper:
                             filter_mode=filter_mode,
                             query=query,
                         )
-                        current_match_count = len(ranked_current)
+                        matching_lang_books = [b for b in ranked_current if book_matches_lang(b)]
+                        current_match_count = len(matching_lang_books) if has_lang_filter else len(ranked_current)
                         _notify_progress(mirror, min(current_match_count, max_results))
 
-                        # Return immediately when the matched number is found!
+                        # Return immediately when target number of language-matching books is found!
                         if current_match_count >= max_results:
                             found_event.set()
-                            books = ranked_current[:max_results]
+                            books = matching_lang_books[:max_results] if has_lang_filter else ranked_current[:max_results]
                             break
                     else:
                         # Mirror returned nothing — no new books, skip redundant recompute
@@ -260,9 +272,13 @@ class LibgenScraper:
                 filter_mode=filter_mode,
                 query=query,
             )
-            books = ranked_current[:max_results]
+            matching_lang_books = [b for b in ranked_current if book_matches_lang(b)]
+            if has_lang_filter and matching_lang_books:
+                books = matching_lang_books[:max_results]
+            elif not has_lang_filter:
+                books = ranked_current[:max_results]
 
-        # If targeted field query (e.g. Series 's', Title 't') returned 0 results, cascade to All Fields
+        # If targeted field query (e.g. Series 's', Title 't') returned 0 language matches, cascade to All Fields
         if not books and search_field and auto_field_fallback:
             return self.search(
                 query=query,
@@ -507,10 +523,10 @@ class LibgenScraper:
         def get_score(book):
             score = 0
             if has_lang_filter and matches_language(book):
-                score += 30
+                score += 1000
             if pref_fmt and pref_fmt != "ANY":
                 if book.extension == pref_fmt:
-                    score += 20
+                    score += 100
             # Query relevance boost
             title_lower = (book.title or "").lower()
             author_lower = (book.author or "").lower()
