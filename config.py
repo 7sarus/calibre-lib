@@ -41,6 +41,8 @@ prefs.defaults["filter_mode"] = "Prioritize"
 prefs.defaults["last_search_query"] = ""
 prefs.defaults["last_successful_mirror"] = ""
 prefs.defaults["max_results"] = 5
+prefs.defaults["show_download_stats"] = False
+prefs.defaults["fastest_cdns"] = {}
 
 SEARCH_FIELDS = {
     "All Fields": "",
@@ -111,6 +113,30 @@ def set_mirror_order(sorted_mirrors):
     custom_set = set(m.rstrip("/") for m in prefs.get("custom_mirrors", []))
     remaining = [m.rstrip("/") for m in sorted_mirrors[1:] if m.rstrip("/") not in custom_set]
     prefs["fallback_mirrors"] = ", ".join(remaining)
+
+
+def record_cdn_speed(host, speed_kb):
+    """Records CDN bandwidth and saves the top fastest CDNs to preferences."""
+    if not host or speed_kb <= 0:
+        return
+    host = host.lower().strip()
+    cdns = prefs.get("fastest_cdns", {})
+    if not isinstance(cdns, dict):
+        cdns = {}
+    prev = cdns.get(host, 0.0)
+    if speed_kb > prev:
+        cdns[host] = round(float(speed_kb), 1)
+    # Keep top 10 fastest
+    sorted_cdns = dict(sorted(cdns.items(), key=lambda item: item[1], reverse=True)[:10])
+    prefs["fastest_cdns"] = sorted_cdns
+
+
+def get_fastest_cdns():
+    """Returns a list of (host, speed_kb) tuples sorted by bandwidth descending."""
+    cdns = prefs.get("fastest_cdns", {})
+    if not isinstance(cdns, dict):
+        return []
+    return sorted(cdns.items(), key=lambda item: item[1], reverse=True)
 
 
 SUPPORTED_LANGUAGES = [

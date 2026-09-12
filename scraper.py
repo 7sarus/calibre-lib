@@ -376,6 +376,20 @@ class LibgenScraper:
                     speed_kb = (bytes_read / 1024) / elapsed if elapsed > 0 else 0
                     progress_callback(bytes_read, total_bytes, speed_kb)
 
+        elapsed = time.time() - start_time
+        if elapsed > 0 and bytes_read > 0:
+            final_speed_kb = (bytes_read / 1024.0) / elapsed
+            cdn_host = urlparse(download_url).netloc
+            try:
+                from calibre_plugins.libgen_store.config import record_cdn_speed
+                record_cdn_speed(cdn_host, final_speed_kb)
+            except Exception:
+                try:
+                    from config import record_cdn_speed
+                    record_cdn_speed(cdn_host, final_speed_kb)
+                except Exception:
+                    pass
+
         return destination_path
 
     def get_fallback_detail_urls(self, detail_url):
