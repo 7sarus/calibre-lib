@@ -3,7 +3,7 @@
 
 """
 Dedicated UI dialog for LibGen Downloader with search, field selection,
-mirror selection/health checks, and bulk queue download manager directly inside Calibre.
+mirror selection/health checks, and queue download manager directly inside Calibre.
 """
 
 import os
@@ -810,7 +810,7 @@ class LibgenDialog(QDialog):
         top_panel.addLayout(row2)
         main_layout.addLayout(top_panel)
 
-        # Tabs: Search Results, Bulk Queue, and Mirrors/Health
+        # Tabs: Search Results, Queue, and Mirrors/Health
         self.tabs = QTabWidget(self)
         self.tabs.currentChanged.connect(self.on_table_selection_changed)
 
@@ -847,7 +847,7 @@ class LibgenDialog(QDialog):
         self.results_table.customContextMenuRequested.connect(self.show_results_context_menu)
         results_layout.addWidget(self.results_table)
 
-        # Global shortcut: Ctrl+Shift+A to add selected to bulk queue
+        # Global shortcut: Ctrl+Shift+A to add selected to queue
         self.queue_shortcut = QShortcut(QKeySequence("Ctrl+Shift+A"), self)
         self.queue_shortcut.activated.connect(self.queue_selected_results)
 
@@ -863,19 +863,19 @@ class LibgenDialog(QDialog):
 
         btn_bar.addStretch()
 
-        self.queue_selected_btn = QPushButton("Add Selected to Bulk Queue", self)
+        self.queue_selected_btn = QPushButton("Add to Queue", self)
         self.queue_selected_btn.setStyleSheet("font-weight: bold; padding: 5px 10px;")
         self.queue_selected_btn.clicked.connect(self.queue_selected_results)
         btn_bar.addWidget(self.queue_selected_btn)
 
-        self.download_now_btn = QPushButton("Download Selected Now", self)
+        self.download_now_btn = QPushButton("Download Selected", self)
         self.download_now_btn.clicked.connect(self.download_selected_now)
         btn_bar.addWidget(self.download_now_btn)
 
         results_layout.addLayout(btn_bar)
         self.tabs.addTab(tab_results, "Search Results (0)")
 
-        # --- Tab 2: Bulk Download Queue ---
+        # --- Tab 2: Download Queue ---
         tab_queue = QWidget()
         queue_layout = QVBoxLayout(tab_queue)
 
@@ -967,7 +967,7 @@ class LibgenDialog(QDialog):
         queue_btn_bar.addWidget(self.start_download_btn)
 
         queue_layout.addLayout(queue_btn_bar)
-        self.tabs.addTab(tab_queue, "Bulk Queue (0)")
+        self.tabs.addTab(tab_queue, "Queue (0)")
 
 
         # --- Tab 3: Mirrors & Health ---
@@ -1408,9 +1408,9 @@ class LibgenDialog(QDialog):
 
         menu = QMenu(self)
         count = len(selected_rows)
-        add_act = menu.addAction(f"Add Selected ({count}) to Bulk Queue\tCtrl+Shift+A")
+        add_act = menu.addAction(f"Add Selected ({count}) to Queue\tCtrl+Shift+A")
         add_act.triggered.connect(self.queue_selected_results)
-        dl_act = menu.addAction(f"Download Selected ({count}) Now")
+        dl_act = menu.addAction(f"Download Selected ({count})")
         dl_act.triggered.connect(self.download_selected_now)
         menu.exec(self.results_table.viewport().mapToGlobal(pos))
 
@@ -1435,9 +1435,9 @@ class LibgenDialog(QDialog):
 
         self.update_queue_table()
         if added_count > 0:
-            self.status_label.setText(f"Added {added_count} book(s) to Bulk Queue.")
+            self.status_label.setText(f"Added {added_count} book(s) to Queue.")
         else:
-            self.status_label.setText("Selected book(s) already in Bulk Queue.")
+            self.status_label.setText("Selected book(s) already in Queue.")
 
         # Retain focus directly in the search input
         self.search_input.setFocus()
@@ -1505,9 +1505,9 @@ class LibgenDialog(QDialog):
         )
         total = len(self.queue_items)
         if 0 < remaining < total:
-            self.tabs.setTabText(1, f"Bulk Queue ({remaining} left)")
+            self.tabs.setTabText(1, f"Queue ({remaining} left)")
         else:
-            self.tabs.setTabText(1, f"Bulk Queue ({total})")
+            self.tabs.setTabText(1, f"Queue ({total})")
         self.apply_queue_filter()
         self.save_queue()
 
@@ -1875,7 +1875,7 @@ class LibgenDialog(QDialog):
         self.stop_download_btn.setEnabled(True)
         self.stop_download_btn.setText("Stop Download")
         self.status_label.setText(f"0/{self.session_total} downloaded ({remaining} remaining)")
-        self.tabs.setTabText(1, f"Bulk Queue ({remaining} left)")
+        self.tabs.setTabText(1, f"Queue ({remaining} left)")
         self.append_log(f"--- Starting Bulk Download: {remaining} remaining item(s) ---")
 
         do_auto_retry = False
@@ -1949,12 +1949,12 @@ class LibgenDialog(QDialog):
                 total = getattr(self, "session_total", len(self.session_target_indices))
                 remaining = max(0, total - completed)
                 self.status_label.setText(f"{completed}/{total} downloaded ({remaining} remaining)")
-                self.tabs.setTabText(1, f"Bulk Queue ({remaining} left)" if remaining > 0 else f"Bulk Queue ({len(self.queue_items)})")
+                self.tabs.setTabText(1, f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
             else:
                 downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
                 remaining = max(0, len(self.queue_items) - downloaded)
                 self.status_label.setText(f"{downloaded}/{len(self.queue_items)} downloaded ({remaining} remaining)")
-                self.tabs.setTabText(1, f"Bulk Queue ({remaining} left)" if remaining > 0 else f"Bulk Queue ({len(self.queue_items)})")
+                self.tabs.setTabText(1, f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
 
     def on_item_progress(self, idx, bytes_read, total_bytes, speed_kb):
         if total_bytes > 0:
@@ -1974,12 +1974,12 @@ class LibgenDialog(QDialog):
                 total = getattr(self, "session_total", len(self.session_target_indices))
                 remaining = max(0, total - completed)
                 self.status_label.setText(f"{completed}/{total} downloaded ({remaining} remaining)")
-                self.tabs.setTabText(1, f"Bulk Queue ({remaining} left)" if remaining > 0 else f"Bulk Queue ({len(self.queue_items)})")
+                self.tabs.setTabText(1, f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
             else:
                 downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
                 remaining = max(0, len(self.queue_items) - downloaded)
                 self.status_label.setText(f"{downloaded}/{len(self.queue_items)} downloaded ({remaining} remaining)")
-                self.tabs.setTabText(1, f"Bulk Queue ({remaining} left)" if remaining > 0 else f"Bulk Queue ({len(self.queue_items)})")
+                self.tabs.setTabText(1, f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
 
     def import_books_to_library(self, file_paths):
         """Batch import downloaded books into Calibre library."""
@@ -2148,7 +2148,7 @@ class LibgenDialog(QDialog):
             self,
             "Preserve Failed Downloads?",
             f"{fail_count} download(s) could not complete or were stopped.\n\n"
-            "Would you like to dump and preserve the failed downloads and partial chunks in the Bulk Queue for later retry?",
+            "Would you like to dump and preserve the failed downloads and partial chunks in the Queue for later retry?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes,
         )
@@ -2159,7 +2159,7 @@ class LibgenDialog(QDialog):
                     itm["status"] = "Queued (Ready to retry)"
                     self.queue_table.setItem(idx, 4, QTableWidgetItem("Queued (Ready to retry)"))
             self.tabs.setCurrentIndex(1)
-            self.append_log(f"↻ Preserved {fail_count} failed download(s) and chunks in Bulk Queue for later retry.")
+            self.append_log(f"↻ Preserved {fail_count} failed download(s) and chunks in Queue for later retry.")
 
     def save_all_field_preferences(self, *args):
         """Starts a debounce timer to persist preferences without spamming disk I/O."""

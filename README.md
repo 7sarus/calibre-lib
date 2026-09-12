@@ -28,7 +28,7 @@ Search books directly across Library Genesis mirrors, lock or filter by language
   - Download all queued books in sequence with automatic **multi-mirror failover** across all active mirrors.
   - **Live Scrolling Activity Log**: Monospace terminal log embedded in the queue tab showing real-time network events, mirror failovers, and chunk streaming progress.
   - **Retry Failed Downloads**: One-click recovery button that re-queues and retries failed books against alternate mirrors.
-  - Or click **Download Selected Now** for immediate one-click downloading.
+  - Or click **Download Selected** for immediate one-click downloading.
 - **Main Library Context Menu**: Right-click any book in Calibre's main library list to instantly **"Search LibGen for Author: <name>"**. Automatically launches search targeted to the Author field with clean filter resets.
 - **Controlled Library Ingestion & Review**:
   - Downloads are decoupled into a sandbox directory and never forced into your Calibre library mid-stream.
@@ -78,9 +78,9 @@ make install
 3. Type your search query and choose your preferred language and format.
 4. From the search results:
    - Select rows using click, `Ctrl+Click`, or `Shift+Click`.
-   - Press **`Ctrl+Shift+A`**, right-click and select **Add to Bulk Queue**, or click the bottom button. Focus automatically stays in the search box so you can keep searching and adding.
-   - When ready, switch to the **Bulk Queue** tab and click **Start Bulk Download**.
-   - Or click **Download Selected Now** to immediately download and import.
+    - Press **`Ctrl+Shift+A`**, right-click and select **Add to Queue**, or click the bottom button. Focus automatically stays in the search box so you can keep searching and adding.
+    - When ready, switch to the **Queue** tab and click **Start Bulk Download**.
+    - Or click **Download Selected** to immediately download and import.
 5. As books finish downloading, they will automatically appear in your Calibre library!
 
 
