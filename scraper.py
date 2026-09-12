@@ -28,13 +28,14 @@ _thread_local = threading.local()
 # Precompiled regex patterns — avoids recompilation on every book row
 _RE_NONWORD = re.compile(r'[\W_]+')
 _RE_BRACKETS = re.compile(r'\[.*?\]|\(.*?\)')
-_RE_MD5 = re.compile(r'md5=([a-fA-F0-9]{32})', re.IGNORECASE)
+_RE_MD5 = re.compile(r'(?i)(?:md5=|[/\\])([a-f0-9]{32})\b')
 _RE_WORD = re.compile(r'\w+')
 
 
 class LibgenBook:
     def __init__(self):
         self.id = ""
+        self.md5 = ""
         self.title = ""
         self.author = ""
         self.publisher = ""
@@ -325,6 +326,8 @@ class LibgenScraper:
                     cover_url = urljoin(mirror, img_node["src"])
 
                 book = LibgenBook()
+                md5_m = _RE_MD5.search(detail_url)
+                book.md5 = md5_m.group(1).lower() if md5_m else ""
                 book.title = title
                 book.author = author
                 book.publisher = publisher
@@ -379,6 +382,8 @@ class LibgenScraper:
                     continue
 
                 book = LibgenBook()
+                md5_m = _RE_MD5.search(detail_url)
+                book.md5 = md5_m.group(1).lower() if md5_m else ""
                 book.title = title
                 book.author = author
                 book.publisher = publisher
@@ -395,14 +400,30 @@ class LibgenScraper:
 
     def _deduplicate_books(self, books, preferred_format="Any"):
         """
-        Deduplicates books by normalized (title, author, language).
-        Strips series/bracket noise so duplicate uploads of the same book are merged.
-        Preserves the preferred format or first occurrence.
+        Deduplicates books using MD5, file size, and metadata fields (title, author,
+        language, extension).
+        - If MD5 matches an already seen book, it is an identical file across mirrors.
+        - If (clean_title, clean_author, lang, extension, size) matches, it is the same
+          release/file even if one mirror lacked MD5 in its URL.
+        - Distinct formats (EPUB vs PDF) and distinct sizes (different scans/editions)
+          are preserved.
+        - Preserves the preferred format or best-filled metadata entry.
         """
-        seen = {}
+        unique_books = []
+        md5_map = {}   # md5 -> index in unique_books
+        meta_map = {}  # meta_key -> index in unique_books
         pref_fmt = (preferred_format or "").strip().upper()
 
         for b in books:
+            # 1. Resolve MD5
+            md5 = getattr(b, "md5", "") or ""
+            if not md5 and getattr(b, "detail_url", ""):
+                m = _RE_MD5.search(b.detail_url)
+                if m:
+                    md5 = m.group(1).lower()
+                    b.md5 = md5
+
+            # 2. Build normalized meta key: title + author + lang + ext + size
             raw_title = (b.title or "").lower()
             clean_title = _RE_BRACKETS.sub('', raw_title)
             clean_title = _RE_NONWORD.sub('', clean_title)
@@ -410,18 +431,41 @@ class LibgenScraper:
                 clean_title = _RE_NONWORD.sub('', raw_title)
 
             clean_author = _RE_NONWORD.sub('', (b.author or "").lower())
-            lang = (b.language or "").lower()
-            key = (clean_title, clean_author, lang)
+            lang = (b.language or "").strip().lower()
+            ext = (b.extension or "").strip().upper()
+            size_key = _RE_NONWORD.sub('', (b.size or "").lower())
 
-            if key not in seen:
-                seen[key] = b
+            meta_key = (clean_title, clean_author, lang, ext, size_key)
+
+            # 3. Check for duplicates
+            dup_idx = None
+            if md5 and md5 in md5_map:
+                dup_idx = md5_map[md5]
+            elif meta_key in meta_map:
+                dup_idx = meta_map[meta_key]
+
+            if dup_idx is None:
+                # New unique book
+                idx = len(unique_books)
+                unique_books.append(b)
+                if md5:
+                    md5_map[md5] = idx
+                if clean_title:
+                    meta_map[meta_key] = idx
             else:
-                existing = seen[key]
+                # Existing duplicate found
+                existing = unique_books[dup_idx]
+                # If incoming book matches preferred format, swap it
                 if pref_fmt and pref_fmt != "ANY":
                     if b.extension == pref_fmt and existing.extension != pref_fmt:
-                        seen[key] = b
+                        unique_books[dup_idx] = b
+                # Link MD5 and meta_key if previously missing
+                if md5 and md5 not in md5_map:
+                    md5_map[md5] = dup_idx
+                if meta_key not in meta_map:
+                    meta_map[meta_key] = dup_idx
 
-        return list(seen.values())
+        return unique_books
 
     def _filter_and_rank(self, books, preferred_language, preferred_format, filter_mode, query=""):
         """
