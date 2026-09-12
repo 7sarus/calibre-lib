@@ -8,9 +8,11 @@ mirror selection/health checks, and bulk queue download manager directly inside 
 
 import os
 import re
+import time
 import tempfile
 import threading
 import concurrent.futures
+from urllib.parse import urlparse
 
 from qt.core import (
     Qt,
@@ -223,7 +225,6 @@ class MirrorHealthWorker(QThread):
         self.mirrors = mirrors
 
     def run(self):
-        import concurrent.futures
         scraper = LibgenScraper(timeout=8)
         
         # 1. Fetch live mirrors from open-slum.org
@@ -266,7 +267,6 @@ class CoverFetchWorker(QThread):
         self._is_aborted = True
 
     def run(self):
-        from urllib.parse import urlparse
         try:
             from calibre_plugins.libgen_store.scraper import LibgenScraper
         except Exception:
@@ -371,7 +371,6 @@ class BulkDownloadWorker(QThread):
         self._is_aborted = True
 
     def run(self):
-        import time
         mirrors = get_mirrors()
         timeout = int(prefs.get("timeout", 20))
         scraper = LibgenScraper(mirrors=mirrors, timeout=timeout)
@@ -1284,7 +1283,6 @@ class LibgenDialog(QDialog):
         self.search_btn.setEnabled(True)
 
     def on_search_progress(self, idx, total, mirror, found_count=0, target_count=0):
-        from urllib.parse import urlparse
         host = urlparse(mirror).netloc or mirror
         percent = int(((idx - 1) / total) * 100) if total > 0 else 0
 
@@ -1304,7 +1302,6 @@ class LibgenDialog(QDialog):
         self.search_btn.setEnabled(True)
         self.stop_search_btn.setVisible(False)
 
-        from urllib.parse import urlparse
         host = urlparse(mirror_used).netloc if mirror_used else "mirror"
         success_text = f"✓ Found {len(books)} artifacts via {host}." if mirror_used else f"✓ Found {len(books)} artifacts."
         self.status_label.setText(success_text)
@@ -1324,10 +1321,10 @@ class LibgenDialog(QDialog):
         QMessageBox.warning(self, "Search Error", f"Failed to search LibGen mirrors:\n{err_msg}")
 
     def populate_results_table(self):
+        books = self.search_results
         self.results_table.setSortingEnabled(False)
-        self.results_table.setRowCount(0)
-        for row, book in enumerate(self.search_results):
-            self.results_table.insertRow(row)
+        self.results_table.setRowCount(len(books))
+        for row, book in enumerate(books):
             title_item = QTableWidgetItem(book.title)
             title_item.setData(Qt.ItemDataRole.UserRole, row)  # Store original index
             self.results_table.setItem(row, 0, title_item)
@@ -1566,7 +1563,6 @@ class LibgenDialog(QDialog):
         self.mirror_health[url] = (is_ok, ms, kb_s, speed_str, msg)
         self.populate_mirrors_table()
         
-        from urllib.parse import urlparse
         host = urlparse(url).netloc or url
         status = "OK" if is_ok else "FAIL"
         speed = f"{speed_str}" if is_ok else ""
@@ -1771,7 +1767,6 @@ class LibgenDialog(QDialog):
             self.start_download_btn.setEnabled(True)
 
     def on_link_trying(self, idx, url, stage):
-        from urllib.parse import urlparse
         host = urlparse(url).netloc or url
         if stage == "resolving":
             status_text = f"Resolving ({host})..."

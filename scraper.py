@@ -7,6 +7,7 @@ Core HTML scraping and mirror management for LibGen.
 
 import os
 import re
+import time
 import shutil
 import threading
 import concurrent.futures
@@ -23,6 +24,12 @@ except ImportError:
 
 # Thread-local storage for browser instance reuse
 _thread_local = threading.local()
+
+# Precompiled regex patterns — avoids recompilation on every book row
+_RE_NONWORD = re.compile(r'[\W_]+')
+_RE_BRACKETS = re.compile(r'\[.*?\]|\(.*?\)')
+_RE_MD5 = re.compile(r'md5=([a-fA-F0-9]{32})', re.IGNORECASE)
+_RE_WORD = re.compile(r'\w+')
 
 
 class LibgenBook:
@@ -174,6 +181,7 @@ class LibgenScraper:
         collected_books = []
         winning_mirror = ""
         mirrors_done = 0
+        current_match_count = 0  # Cache to avoid recomputing on mirror misses
 
         def _notify_progress(mirror, current_found):
             if progress_callback:
@@ -229,15 +237,8 @@ class LibgenScraper:
                             books = ranked_current[:max_results]
                             break
                     else:
-                        processed_books = self._deduplicate_books(collected_books, preferred_format) if unique_results else list(collected_books)
-                        ranked_current = self._filter_and_rank(
-                            processed_books,
-                            preferred_language=preferred_language,
-                            preferred_format=preferred_format,
-                            filter_mode=filter_mode,
-                            query=query,
-                        )
-                        _notify_progress(curr_mirror, min(len(ranked_current), max_results))
+                        # Mirror returned nothing — no new books, skip redundant recompute
+                        _notify_progress(curr_mirror, min(current_match_count, max_results))
                 except Exception:
                     pass
 
@@ -403,12 +404,12 @@ class LibgenScraper:
 
         for b in books:
             raw_title = (b.title or "").lower()
-            clean_title = re.sub(r'\[.*?\]|\(.*?\)', '', raw_title)
-            clean_title = re.sub(r'[\W_]+', '', clean_title)
+            clean_title = _RE_BRACKETS.sub('', raw_title)
+            clean_title = _RE_NONWORD.sub('', clean_title)
             if not clean_title:
-                clean_title = re.sub(r'[\W_]+', '', raw_title)
+                clean_title = _RE_NONWORD.sub('', raw_title)
 
-            clean_author = re.sub(r'[\W_]+', '', (b.author or "").lower())
+            clean_author = _RE_NONWORD.sub('', (b.author or "").lower())
             lang = (b.language or "").lower()
             key = (clean_title, clean_author, lang)
 
@@ -457,7 +458,7 @@ class LibgenScraper:
             # If strict filter eliminated all candidates, fall through to Prioritize ranking
 
         # Prioritize Mode: score items by language match, format match, and query relevance
-        query_words = [w.lower() for w in re.findall(r'\w+', query or "") if len(w) > 2]
+        query_words = [w.lower() for w in _RE_WORD.findall(query or "") if len(w) > 2]
 
         def get_score(book):
             score = 0
@@ -487,7 +488,6 @@ class LibgenScraper:
         if not detail_url:
             return None, None
 
-        from urllib.parse import urlparse
         t = timeout or self.timeout
         b = self._get_browser()
         
@@ -552,7 +552,6 @@ class LibgenScraper:
 
         bytes_read = 0
         chunk_size = 128 * 1024  # 128 KB
-        import time
         start_time = time.time()
 
         with open(destination_path, "wb") as f:
@@ -590,15 +589,13 @@ class LibgenScraper:
         Extracts the MD5 and path from a detail URL and constructs equivalent URLs
         across all configured mirrors for robust auto-failover, prioritizing the last successful mirror.
         """
-        import re
-        from urllib.parse import urlparse
 
         if not detail_url:
             return []
 
         urls = []
         parsed = urlparse(detail_url)
-        md5_match = re.search(r'md5=([a-fA-F0-9]{32})', detail_url)
+        md5_match = _RE_MD5.search(detail_url)
         md5 = md5_match.group(1) if md5_match else None
 
         last_succ = ""
@@ -648,7 +645,6 @@ class LibgenScraper:
         Reads only 1 byte to validate the stream — does NOT download the full file.
         Returns dict with mirror info or None.
         """
-        from urllib.parse import urlparse
         try:
             host = urlparse(url).netloc
             download_url, cover_url = self.resolve_details(url, timeout=timeout)
@@ -785,7 +781,6 @@ class LibgenScraper:
 
         progress_lock = threading.Lock()
         shared_bytes = [0]
-        import time
         start_time = time.time()
 
         def on_chunk(chunk_len):
@@ -903,7 +898,7 @@ class LibgenScraper:
             for cand in candidate_books:
                 if target_ext and (cand.extension or "").lower() != target_ext:
                     continue
-                m = re.search(r'md5=([a-fA-F0-9]{32})', cand.detail_url)
+                m = _RE_MD5.search(cand.detail_url)
                 cand_md5 = m.group(1).lower() if m else None
                 if cand_md5 and cand_md5 != (current_md5 or "").lower():
                     if log_callback:
@@ -933,7 +928,6 @@ class LibgenScraper:
         piece-together if supported, with automatic failover to single-stream mirror downloads.
         In fast_mode: uses 3s probe timeout and skips directly to failed list without long fallback chains.
         """
-        from urllib.parse import urlparse
 
         candidate_urls = self.get_fallback_detail_urls(detail_url)
         if not candidate_urls:
@@ -1032,7 +1026,7 @@ class LibgenScraper:
 
         # Step 4: Lean Secondary Fallback (Non-MD5 Title Search) before exhaustive sequential probe
         if not working_sources and book_title:
-            cur_md5_match = re.search(r'md5=([a-fA-F0-9]{32})', detail_url)
+            cur_md5_match = _RE_MD5.search(detail_url)
             cur_md5 = cur_md5_match.group(1) if cur_md5_match else None
             alt_url = self._find_alternative_md5_by_title(
                 cur_md5, book_title, author=book_author, ext=book_ext, log_callback=log_callback
