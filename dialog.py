@@ -57,6 +57,7 @@ from calibre_plugins.libgen_store.config import (
     set_mirror_order,
     add_custom_mirror,
     remove_custom_mirror,
+    discard_mirrors,
     PLUGIN_VERSION_STR,
     get_fastest_cdns,
 )
@@ -981,6 +982,12 @@ class LibgenDialog(QDialog):
         self.set_primary_btn.clicked.connect(self.set_selected_mirror_primary)
         mirror_actions_bar.addWidget(self.set_primary_btn)
 
+        self.discard_dead_btn = QPushButton("Discard Dead Mirrors", self)
+        self.discard_dead_btn.setStyleSheet("font-weight: bold; color: #ff8080;")
+        self.discard_dead_btn.setToolTip("Remove mirrors that failed latency/bandwidth tests from your configured mirrors")
+        self.discard_dead_btn.clicked.connect(self.discard_dead_mirrors)
+        mirror_actions_bar.addWidget(self.discard_dead_btn)
+
         mirror_actions_bar.addStretch()
         mirrors_layout.addLayout(mirror_actions_bar)
 
@@ -1551,6 +1558,12 @@ class LibgenDialog(QDialog):
                 del_btn = QPushButton("Remove")
                 del_btn.clicked.connect(lambda checked, url=m: self.remove_mirror_handler(url))
                 self.mirrors_table.setCellWidget(row, 5, del_btn)
+            elif health and not is_ok:
+                discard_btn = QPushButton("Discard")
+                discard_btn.setStyleSheet("color: #ff8080; font-weight: bold;")
+                discard_btn.setToolTip("Discard this dead mirror from your configured mirrors")
+                discard_btn.clicked.connect(lambda checked, url=m: self.discard_single_mirror_handler(url))
+                self.mirrors_table.setCellWidget(row, 5, discard_btn)
             else:
                 self.mirrors_table.setItem(row, 5, QTableWidgetItem("-"))
 
@@ -1657,6 +1670,56 @@ class LibgenDialog(QDialog):
         self.populate_mirrors_table()
         self.update_mirror_combobox()
         self.status_label.setText(f"Removed mirror: {url}")
+
+    def discard_single_mirror_handler(self, url):
+        discard_mirrors([url])
+        if url in self.mirror_health:
+            del self.mirror_health[url]
+        self.populate_mirrors_table()
+        self.update_mirror_combobox()
+        self.status_label.setText(f"Discarded dead mirror: {url}")
+        self.append_log(f"🗑 Discarded dead mirror from configuration: {url}")
+
+    def discard_dead_mirrors(self):
+        """Discards all mirrors that failed the health test from the user's mirror list."""
+        if not self.mirror_health:
+            QMessageBox.information(
+                self,
+                "Test Required",
+                "No health tests have been run yet.\n\nPlease click 'Ping / Test All Mirrors' first to detect dead mirrors."
+            )
+            return
+
+        dead = [m for m, health in self.mirror_health.items() if health and not health[0]]
+        if not dead:
+            QMessageBox.information(
+                self,
+                "No Dead Mirrors",
+                "All tested mirrors are currently online! None were discarded."
+            )
+            return
+
+        dead_list_str = "\n".join(f"• {m}" for m in dead)
+        reply = QMessageBox.question(
+            self,
+            "Discard Dead Mirrors",
+            f"The following {len(dead)} mirror(s) failed the health test:\n\n{dead_list_str}\n\n"
+            "Discard these dead mirrors from your configured mirrors?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        discard_mirrors(dead)
+        for m in dead:
+            if m in self.mirror_health:
+                del self.mirror_health[m]
+
+        self.populate_mirrors_table()
+        self.update_mirror_combobox()
+        self.status_label.setText(f"Discarded {len(dead)} dead mirror(s).")
+        self.append_log(f"🗑 Discarded {len(dead)} dead mirror(s) from local configuration.")
 
     def set_search_query(self, query, field="Author", reset_filters_to_default=True):
         """Pre-fills search query, sets field dropdown to Author, and resets other filters to defaults."""
