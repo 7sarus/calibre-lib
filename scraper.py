@@ -116,15 +116,15 @@ class LibgenScraper:
         unique_results=True,
         progress_callback=None,
         abort_check=None,
+        auto_field_fallback=True,
     ):
         """
         Search LibGen mirrors concurrently for books matching the query.
         First mirror to return results wins; all others are cancelled.
+        Includes automatic cascade fallback to 'All Fields' if a specific field yields no results.
         """
 
         encoded_query = quote_plus(query.strip())
-        field_param = f"&columns%5B%5D={search_field}" if search_field else ""
-        topic_param = f"&topics%5B%5D={category}" if category else ""
 
         # Determine mirror order: selected mirror first (if valid), followed by remaining mirrors
         mirror_order = list(self.mirrors)
@@ -145,7 +145,18 @@ class LibgenScraper:
                 b = self._get_browser()
                 # Request 4x max_results so deduplication and language filtering have ample candidates
                 fetch_count = max(max_results * 4, 25)
-                search_url = f"{mirror}/index.php?req={encoded_query}{field_param}{topic_param}&res={fetch_count}"
+
+                # Protocol schema detection: classic mirrors (libgen.is/rs/st) vs modern LibGen Plus (libgen.li/bz/la/gl/vg)
+                is_classic = any(h in mirror.lower() for h in ["libgen.is", "libgen.rs", "libgen.st"])
+                if is_classic:
+                    field_map = {"t": "title", "a": "author", "s": "series", "p": "publisher", "y": "year", "i": "identifier"}
+                    col = field_map.get(search_field, "def")
+                    search_url = f"{mirror}/search.php?req={encoded_query}&column={col}&res={fetch_count}"
+                else:
+                    field_param = f"&columns%5B%5D={search_field}" if search_field else ""
+                    topic_param = f"&topics%5B%5D={category}" if category else ""
+                    search_url = f"{mirror}/index.php?req={encoded_query}{field_param}{topic_param}&res={fetch_count}"
+
                 resp = b.open(search_url, timeout=self.timeout)
                 if found_event.is_set() or (abort_check and abort_check()):
                     return None, mirror
@@ -184,6 +195,23 @@ class LibgenScraper:
                 except Exception:
                     pass
 
+        # If targeted field query (e.g. Series 's', Title 't') returned 0 results, cascade to All Fields
+        if not books and search_field and auto_field_fallback:
+            return self.search(
+                query=query,
+                search_field="",
+                category=category,
+                selected_mirror=selected_mirror,
+                max_results=max_results,
+                preferred_language=preferred_language,
+                preferred_format=preferred_format,
+                filter_mode=filter_mode,
+                unique_results=unique_results,
+                progress_callback=progress_callback,
+                abort_check=abort_check,
+                auto_field_fallback=False,
+            )
+
         if not books:
             return []
 
@@ -191,21 +219,24 @@ class LibgenScraper:
         if unique_results:
             books = self._deduplicate_books(books)
 
-        # Filter and rank books based on language and format preferences
+        # Filter and rank books based on language, format preferences, and query relevance
         filtered_books = self._filter_and_rank(
             books,
             preferred_language=preferred_language,
             preferred_format=preferred_format,
             filter_mode=filter_mode,
+            query=query,
         )
 
         return filtered_books[:max_results]
 
     def _parse_search_page(self, soup, mirror):
         """
-        Parses search result tables across LibGen Plus (#tablelibgen) and standard Libgen formats.
+        Parses search result tables across LibGen Plus (#tablelibgen) and standard Libgen formats (table.c).
         """
         books = []
+
+        # Format 1: LibGen Plus (#tablelibgen)
         table = soup.select_one("#tablelibgen tbody") or soup.select_one("#tablelibgen")
         if table:
             rows = table.find_all("tr")
@@ -216,7 +247,6 @@ class LibgenScraper:
 
                 # Title column may have multiple child nodes / links
                 title_node = cells[0]
-                # Filter out unwanted sub-tags like NOBR if present
                 for tag in title_node.find_all("nobr"):
                     tag.decompose()
                 title = title_node.get_text(" ", strip=True)
@@ -257,6 +287,60 @@ class LibgenScraper:
                 book.cover_url = cover_url
                 books.append(book)
 
+            if books:
+                return books
+
+        # Format 2: Classic LibGen (<table class="c"> or table[rules="rows"])
+        classic_table = soup.select_one("table.c") or soup.find("table", attrs={"rules": "rows"})
+        if classic_table:
+            rows = classic_table.find_all("tr")
+            for r in rows:
+                cells = r.find_all("td")
+                if len(cells) < 9:
+                    continue
+                # Skip header row
+                if cells[0].get_text(strip=True).upper() in ["ID", ""]:
+                    continue
+
+                author = cells[1].get_text(" ", strip=True)
+                title_node = cells[2]
+                title_a = title_node.find("a")
+                title = title_a.get_text(" ", strip=True) if title_a else title_node.get_text(" ", strip=True)
+
+                # Check for series prefix in <font color="green">[Series]</font>
+                series_fonts = [f.get_text(strip=True) for f in title_node.find_all("font", color="green")]
+                if series_fonts:
+                    title = f"[{' '.join(series_fonts)}] {title}"
+
+                publisher = cells[3].get_text(" ", strip=True)
+                year = cells[4].get_text(strip=True)
+                pages = cells[5].get_text(strip=True)
+                language = cells[6].get_text(strip=True)
+                size = cells[7].get_text(strip=True)
+                extension = cells[8].get_text(strip=True).upper()
+
+                detail_url = ""
+                if len(cells) > 9:
+                    m_a = cells[9].find("a")
+                    if m_a and m_a.get("href"):
+                        detail_url = urljoin(mirror, m_a["href"])
+
+                if not title:
+                    continue
+
+                book = LibgenBook()
+                book.title = title
+                book.author = author
+                book.publisher = publisher
+                book.year = year
+                book.language = language
+                book.pages = pages
+                book.size = size
+                book.extension = extension
+                book.detail_url = detail_url
+                book.cover_url = ""
+                books.append(book)
+
         return books
 
     def _deduplicate_books(self, books):
@@ -277,11 +361,11 @@ class LibgenScraper:
             unique.append(b)
         return unique
 
-    def _filter_and_rank(self, books, preferred_language, preferred_format, filter_mode):
+    def _filter_and_rank(self, books, preferred_language, preferred_format, filter_mode, query=""):
         """
         Handles multi-language and format locking/filtering:
-        - Strict mode: Completely discards non-matching results.
-        - Prioritize mode: Surfaces matching results to the top of the list.
+        - Strict mode: Completely discards non-matching results (with fallback if 0 matches).
+        - Prioritize mode: Surfaces matching results and query relevance to the top.
         """
         if isinstance(preferred_language, (list, tuple, set)):
             pref_langs = [str(l).strip().lower() for l in preferred_language if str(l).strip()]
@@ -307,16 +391,28 @@ class LibgenScraper:
                     if b.extension != pref_fmt:
                         continue
                 strict_list.append(b)
-            return strict_list
+            if strict_list:
+                return strict_list
+            # If strict filter eliminated all candidates, fall through to Prioritize ranking
 
-        # Prioritize Mode: score items
+        # Prioritize Mode: score items by language match, format match, and query relevance
+        query_words = [w.lower() for w in re.findall(r'\w+', query or "") if len(w) > 2]
+
         def get_score(book):
             score = 0
             if has_lang_filter and matches_language(book):
-                score += 10
+                score += 30
             if pref_fmt and pref_fmt != "ANY":
                 if book.extension == pref_fmt:
                     score += 20
+            # Query relevance boost
+            title_lower = (book.title or "").lower()
+            author_lower = (book.author or "").lower()
+            for w in query_words:
+                if w in title_lower:
+                    score += 5
+                if w in author_lower:
+                    score += 3
             return score
 
         # Sort descending by score, maintaining original order for ties
