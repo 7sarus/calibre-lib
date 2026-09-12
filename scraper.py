@@ -80,8 +80,8 @@ class LibgenScraper:
                 matches = re.findall(r'href="(https://libgen\.[a-z]+)"', html, re.IGNORECASE)
                 for m in matches:
                     mirrors.add(m.lower())
-        except Exception as e:
-            print(f"Failed to fetch live mirrors from open-slum: {e}")
+        except Exception:
+            pass
         return list(mirrors)
 
     def __init__(self, mirrors=None, timeout=20):
@@ -592,8 +592,7 @@ class LibgenScraper:
                     break
 
             return download_url, cover_url
-        except Exception as e:
-            print(f"Exception in resolve_details for {detail_url}: {e}")
+        except Exception:
             return None, None
 
     def download_file(self, download_url, destination_path, progress_callback=None, abort_check=None):
@@ -735,8 +734,7 @@ class LibgenScraper:
                 "accepts_ranges": accepts_ranges,
                 "cover_url": cover_url,
             }
-        except Exception as e:
-            print(f"[_probe_source] Exception for {url}: {e}")
+        except Exception:
             return None
 
     def _download_segment(
