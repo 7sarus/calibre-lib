@@ -18,7 +18,7 @@ class LibgenAction(InterfaceAction):
 
     def genesis(self):
         self.qaction.setText("LibGen")
-        self.qaction.setToolTip("Search, bulk queue, and download books from LibGen directly into Calibre")
+        self.qaction.setToolTip("Search, queue, and download books from LibGen directly into Calibre")
 
         # Load plugin toolbar icon from zipped resources
         self.icon = QIcon()
