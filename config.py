@@ -21,7 +21,30 @@ from qt.core import (
 
 # Plugin Version definitions
 PLUGIN_VERSION = (1, 10, 0, "b")
-PLUGIN_VERSION_STR = "v1.10b"
+_BASE_VERSION_STR = "v1.10b"
+_BUILD_COMMIT = "449"
+
+
+def _resolve_version_str():
+    try:
+        import subprocess
+
+        cmd = ["git", "rev-list", "--count", "HEAD"]
+        cnt = (
+            subprocess.check_output(cmd, cwd=os.path.dirname(__file__), stderr=subprocess.DEVNULL)
+            .decode()
+            .strip()
+        )
+        if cnt:
+            return f"{_BASE_VERSION_STR}-{cnt}"
+    except Exception:
+        pass
+    if _BUILD_COMMIT:
+        return f"{_BASE_VERSION_STR}-{_BUILD_COMMIT}"
+    return _BASE_VERSION_STR
+
+
+PLUGIN_VERSION_STR = _resolve_version_str()
 
 # Store configuration under Calibre's standard plugin config path
 prefs = JSONConfig("plugins/libgen_store")
