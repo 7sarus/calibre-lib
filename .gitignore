@@ -1,0 +1,22 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+*.zip
+*.egg-info/
+dist/
+build/
+
+# Calibre cache / runtime
+*.calibre_tmp
+.calibre_test/
+
+# Environment / IDE
+.env
+.venv
+env/
+venv/
+.idea/
+.vscode/
