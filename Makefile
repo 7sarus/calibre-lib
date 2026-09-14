@@ -1,5 +1,5 @@
 PLUGIN_NAME = libgen_downloader.zip
-SOURCES = __init__.py ui.py dialog.py scraper.py config.py hardcover.py plugin-import-name-libgen_store.txt images/icon.png
+SOURCES = __init__.py ui.py dialog.py scraper.py config.py hardcover.py progress_delegate.py plugin-import-name-libgen_store.txt images/icon.png
 COMMIT_COUNT = $(shell git rev-list --count HEAD 2>/dev/null || echo "449")
 
 .PHONY: all build install uninstall test clean release release-beta
