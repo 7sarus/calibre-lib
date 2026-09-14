@@ -416,19 +416,19 @@ class SearchQueueWorker(QThread):
                 completed[0] + 1,
                 total,
                 label,
-                f"Lane {((record_index - 1) % len(top_mirrors)) + 1}: querying {host} for '{label}'{tag} (max 2)...",
+                f"Lane {((record_index - 1) % len(top_mirrors)) + 1}: querying {host} for '{label}'{tag} (max 1)...",
             )
 
             results = []
 
-            # 1. Try ISBN if available (strictly max_results = 2)
+            # 1. Try ISBN if available (strictly max_results = 1 for instant exit)
             if isbn:
                 try:
                     results = scraper.search(
                         query=isbn,
                         search_field="i",
                         selected_mirror=assigned_mirror,
-                        max_results=2,
+                        max_results=1,
                         preferred_language=self.language,
                         preferred_format=self.fmt,
                         filter_mode=self.filter_mode,
@@ -438,7 +438,7 @@ class SearchQueueWorker(QThread):
                 except Exception:
                     results = []
 
-            # 2. Fallback to Title + Author if no ISBN results (strictly max_results = 2)
+            # 2. Fallback to Title + Author if no ISBN results (strictly max_results = 1)
             if not results and (title or author):
                 q = f"{title} {author}".strip()
                 try:
@@ -446,7 +446,7 @@ class SearchQueueWorker(QThread):
                         query=q,
                         search_field="",
                         selected_mirror=assigned_mirror,
-                        max_results=2,
+                        max_results=1,
                         preferred_language=self.language,
                         preferred_format=self.fmt,
                         filter_mode=self.filter_mode,
@@ -456,8 +456,8 @@ class SearchQueueWorker(QThread):
                 except Exception:
                     results = []
 
-            # Ensure hard limit of strictly max 2 results per record
-            results = results[:2] if results else []
+            # Ensure hard limit of strictly max 1 result per record
+            results = results[:1] if results else []
             return bool(results), rec, results
 
         concurrency = min(5, max(2, len(self.records)))

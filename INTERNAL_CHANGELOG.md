@@ -8,6 +8,13 @@ updated: 2026-09-15
 
 ## 2026-09-15
 
+- id: bulk-search-single-result-isbn
+  type: perf
+  files: [dialog.py, scraper.py, config.py]
+  summary: Limited bulk search queue to 1 result per entry; clamped identifier search fetch_count to 5 to avoid scraping unnecessary HTML tables. Tested ISBN vs title/author speeds.
+  why: User requested finding 1 result per entry in bulk search and testing whether ISBN is faster than title/author.
+  validation: 9/9 unit tests pass; live test showed ISBN is 35-50% faster (2.6s vs 4-5s)
+
 - id: search-queue-deferral-and-hide-cats
   type: feat
   files: [dialog.py, config.py]

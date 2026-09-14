@@ -213,7 +213,9 @@ class LibgenScraper:
 
         # Fetch enough for filtering without forcing every normal search to parse 100+ rows.
         has_format_filter = bool(preferred_format and preferred_format != "Any")
-        if has_lang_filter or has_format_filter:
+        if search_field == "i":
+            fetch_count = max(max_results * 2, 5)
+        elif has_lang_filter or has_format_filter:
             fetch_count = min(100, max(max_results * 8, 40))
         else:
             fetch_count = min(60, max(max_results * 4, 20))
