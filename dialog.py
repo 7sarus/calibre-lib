@@ -10,7 +10,9 @@ import os
 import re
 import time
 import tempfile
+import shutil
 import threading
+from collections import OrderedDict
 import concurrent.futures
 from urllib.parse import urlparse
 
@@ -552,106 +554,108 @@ class BulkDownloadWorker(QThread):
         scraper = LibgenScraper(mirrors=mirrors, timeout=timeout)
 
         temp_dir = tempfile.mkdtemp(prefix="calibre_libgen_")
-        downloaded_items = []
-        fail_count = 0
-
-        while not self._is_aborted:
+        try:
+            downloaded_items = []
             fail_count = 0
-            any_processed = False
 
-            pending_items = [(idx, i) for idx, i in enumerate(self.items) if i.get("status") not in ("✓ Added to Library", "Downloaded", "✓ Downloaded (Pending Review)")]
-            total_pending = len(pending_items)
-            current_num = [0]
-            dl_lock = threading.Lock()
-            fail_count_ref = [0]
+            while not self._is_aborted:
+                fail_count = 0
+                any_processed = False
 
-            def process_item(idx, item):
-                if self._is_aborted:
-                    return
+                pending_items = [(idx, i) for idx, i in enumerate(self.items) if i.get("status") not in ("✓ Added to Library", "Downloaded", "✓ Downloaded (Pending Review)")]
+                total_pending = len(pending_items)
+                current_num = [0]
+                dl_lock = threading.Lock()
+                fail_count_ref = [0]
 
-                book = item["book"]
-                with dl_lock:
-                    current_num[0] += 1
-                    c_num = current_num[0]
-
-                ts = time.strftime('%H:%M:%S')
-                short_title = (book.title or "Unknown")[:45]
-                self.log_message.emit(f"[{ts}] [{c_num}/{total_pending}] Starting: \"{short_title}\"")
-                self.item_status.emit(idx, "Resolving mirror link...")
-
-                ext = (book.extension or "epub").lower()
-                safe_title = sanitize_filename(book.title or "Unknown")
-                safe_author = sanitize_filename(book.author or "Unknown")
-                dest_file = os.path.join(temp_dir, f"{safe_title} - {safe_author}.{ext}")
-
-                def on_log(msg):
-                    t_now = time.strftime('%H:%M:%S')
-                    self.log_message.emit(f"[{t_now}] {msg}")
-
-                def on_progress(bytes_read, total, speed_kb=0.0):
-                    self.item_progress.emit(idx, bytes_read, total, float(speed_kb))
-
-                def on_link(url, stage):
-                    self.link_trying.emit(idx, url, stage)
-
-                try:
-                    self.item_status.emit(idx, "Downloading...")
-                    dest_path, cover_url = scraper.resolve_and_download(
-                        book.detail_url,
-                        dest_file,
-                        book_title=book.title,
-                        book_author=book.author,
-                        book_ext=book.extension,
-                        log_callback=on_log,
-                        progress_callback=on_progress,
-                        link_callback=on_link,
-                        abort_check=lambda: self._is_aborted,
-                        fast_mode=self.fast_mode,
-                    )
-                    item["dest_file"] = dest_path
-                    item["status"] = "Downloaded"
-                    self.item_status.emit(idx, "✓ Downloaded (Pending Review)")
-                    with dl_lock:
-                        downloaded_items.append({
-                            "index": idx,
-                            "book": book,
-                            "file_path": dest_path,
-                        })
-                except Exception as e:
-                    err_msg = str(e)
-                    if "stopped by user" in err_msg.lower() or self._is_aborted:
-                        if os.path.exists(dest_file):
-                            try:
-                                os.remove(dest_file)
-                            except Exception:
-                                pass
-                        self.item_status.emit(idx, "Stopped")
-                        on_log(f"⚠ Stopped downloading \"{short_title}\" by user request.")
-                        return
-                    self.item_status.emit(idx, f"Failed: {err_msg[:40]}")
-                    on_log(f"✗ Failed to download \"{short_title}\": {err_msg}")
-                    with dl_lock:
-                        fail_count_ref[0] += 1
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-                futures = [pool.submit(process_item, idx, item) for idx, item in pending_items]
-                for fut in concurrent.futures.as_completed(futures):
-                    pass
-            
-            fail_count = fail_count_ref[0]
-
-            if not self.auto_retry or fail_count == 0 or self._is_aborted:
-                break
-            
-            if self.auto_retry and fail_count > 0:
-                t_now = time.strftime('%H:%M:%S')
-                self.log_message.emit(f"[{t_now}] ↻ Auto-retry enabled. Retrying {fail_count} failed item(s) in 3 seconds...")
-                for _ in range(30):
+                def process_item(idx, item):
                     if self._is_aborted:
-                        break
-                    time.sleep(0.1)
+                        return
 
-        self.all_done.emit(downloaded_items, fail_count, bool(self._is_aborted))
+                    book = item["book"]
+                    with dl_lock:
+                        current_num[0] += 1
+                        c_num = current_num[0]
+
+                    ts = time.strftime('%H:%M:%S')
+                    short_title = (book.title or "Unknown")[:45]
+                    self.log_message.emit(f"[{ts}] [{c_num}/{total_pending}] Starting: \"{short_title}\"")
+                    self.item_status.emit(idx, "Resolving mirror link...")
+
+                    ext = (book.extension or "epub").lower()
+                    safe_title = sanitize_filename(book.title or "Unknown")
+                    safe_author = sanitize_filename(book.author or "Unknown")
+                    dest_file = os.path.join(temp_dir, f"{safe_title} - {safe_author}.{ext}")
+
+                    def on_log(msg):
+                        t_now = time.strftime('%H:%M:%S')
+                        self.log_message.emit(f"[{t_now}] {msg}")
+
+                    def on_progress(bytes_read, total, speed_kb=0.0):
+                        self.item_progress.emit(idx, bytes_read, total, float(speed_kb))
+
+                    def on_link(url, stage):
+                        self.link_trying.emit(idx, url, stage)
+
+                    try:
+                        self.item_status.emit(idx, "Downloading...")
+                        dest_path, cover_url = scraper.resolve_and_download(
+                            book.detail_url,
+                            dest_file,
+                            book_title=book.title,
+                            book_author=book.author,
+                            book_ext=book.extension,
+                            log_callback=on_log,
+                            progress_callback=on_progress,
+                            link_callback=on_link,
+                            abort_check=lambda: self._is_aborted,
+                            fast_mode=self.fast_mode,
+                        )
+                        self.item_status.emit(idx, f"✓ Downloaded (Pending Review)|{dest_path}")
+                        with dl_lock:
+                            downloaded_items.append({
+                                "index": idx,
+                                "book": book,
+                                "file_path": dest_path,
+                            })
+                    except Exception as e:
+                        err_msg = str(e)
+                        if "stopped by user" in err_msg.lower() or self._is_aborted:
+                            if os.path.exists(dest_file):
+                                try:
+                                    os.remove(dest_file)
+                                except Exception:
+                                    pass
+                            self.item_status.emit(idx, "Stopped")
+                            on_log(f"⚠ Stopped downloading \"{short_title}\" by user request.")
+                            return
+                        self.item_status.emit(idx, f"Failed: {err_msg[:40]}")
+                        on_log(f"✗ Failed to download \"{short_title}\": {err_msg}")
+                        with dl_lock:
+                            fail_count_ref[0] += 1
+
+                with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                    futures = [pool.submit(process_item, idx, item) for idx, item in pending_items]
+                    for fut in concurrent.futures.as_completed(futures):
+                        pass
+            
+                fail_count = fail_count_ref[0]
+
+                if not self.auto_retry or fail_count == 0 or self._is_aborted:
+                    break
+            
+                if self.auto_retry and fail_count > 0:
+                    t_now = time.strftime('%H:%M:%S')
+                    self.log_message.emit(f"[{t_now}] ↻ Auto-retry enabled. Retrying {fail_count} failed item(s) in 3 seconds...")
+                    for _ in range(30):
+                        if self._is_aborted:
+                            break
+                        time.sleep(0.1)
+
+            self.all_done.emit(downloaded_items, fail_count, bool(self._is_aborted))
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
 
 
 class HistorySettingsDialog(QDialog):
@@ -1174,11 +1178,17 @@ class LibgenDialog(QDialog):
         self.save_timer.timeout.connect(self._do_save_all_field_preferences)
 
         # In-memory cover cache and text loading animation timer
-        self.cover_cache = {}
+        self.cover_cache = OrderedDict()
         self.cover_anim_timer = QTimer(self)
         self.cover_anim_timer.setInterval(110)
         self.cover_anim_timer.timeout.connect(self.update_cover_animation)
         self.cover_anim_frame = 0
+
+        # Debounce timer for queue filtering
+        self._filter_timer = QTimer(self)
+        self._filter_timer.setSingleShot(True)
+        self._filter_timer.setInterval(200)
+        self._filter_timer.timeout.connect(self.apply_queue_filter)
 
         # Download stats toggle (toggled by triple-clicking version badge)
         self.show_stats = bool(prefs.get("show_download_stats", True))
@@ -1950,6 +1960,7 @@ class LibgenDialog(QDialog):
         if book and getattr(book, "detail_url", None):
             cache_key = book.detail_url or book.title
             if cache_key in self.cover_cache:
+                self.cover_cache.move_to_end(cache_key)
                 if hasattr(self, 'cover_worker') and self.cover_worker and self.cover_worker.isRunning():
                     self.cover_worker.abort()
                 self.cover_anim_timer.stop()
@@ -2011,6 +2022,9 @@ class LibgenDialog(QDialog):
     def on_cover_fetched(self, data, detail_url):
         if detail_url:
             self.cover_cache[detail_url] = data
+            self.cover_cache.move_to_end(detail_url)
+            while len(self.cover_cache) > 100:
+                self.cover_cache.popitem(last=False)
 
         # Check if the fetched cover still matches the currently selected book
         idx = self.tabs.currentIndex()
@@ -2476,36 +2490,40 @@ class LibgenDialog(QDialog):
             self.log_toggle_btn.setText("▼ Live Activity Log" if show else "▶ Live Activity Log")
 
     def update_queue_table(self):
-        self.queue_table.setRowCount(len(self.queue_items))
-        for row, q in enumerate(self.queue_items):
-            book = q["book"]
-            self.queue_table.setItem(row, 0, QTableWidgetItem(book.title))
-            self.queue_table.setItem(row, 1, QTableWidgetItem(book.author))
-            self.queue_table.setItem(row, 2, QTableWidgetItem(book.extension))
-            self.queue_table.setItem(row, 3, QTableWidgetItem(book.size))
-            status_text = q.get("status", "Queued")
-            status_item = QTableWidgetItem(status_text)
-            st_lower = status_text.lower()
-            if "failed" in st_lower or "error" in st_lower or "skipped" in st_lower:
-                status_item.setForeground(QColor("#ef4444"))
-            elif "downloaded" in st_lower or "added" in st_lower:
-                status_item.setForeground(QColor("#22c55e"))
-            self.queue_table.setItem(row, 4, status_item)
-            self.queue_table.setItem(row, 5, QTableWidgetItem(""))
-            pct = q.get("progress", 0)
-            self._set_queue_item_progress(row, pct, status_text)
-
-        remaining = sum(
-            1 for q in self.queue_items
-            if q.get("status") not in ("✓ Added to Library", "Downloaded", "✓ Downloaded (Pending Review)")
-        )
-        total = len(self.queue_items)
-        if 0 < remaining < total:
-            self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)")
-        else:
-            self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({total})")
-        self.apply_queue_filter()
-        self.save_queue()
+        self.queue_table.setUpdatesEnabled(False)
+        try:
+            self.queue_table.setRowCount(len(self.queue_items))
+            for row, q in enumerate(self.queue_items):
+                book = q["book"]
+                self.queue_table.setItem(row, 0, QTableWidgetItem(book.title))
+                self.queue_table.setItem(row, 1, QTableWidgetItem(book.author))
+                self.queue_table.setItem(row, 2, QTableWidgetItem(book.extension))
+                self.queue_table.setItem(row, 3, QTableWidgetItem(book.size))
+                status_text = q.get("status", "Queued")
+                status_item = QTableWidgetItem(status_text)
+                st_lower = status_text.lower()
+                if "failed" in st_lower or "error" in st_lower or "skipped" in st_lower:
+                    status_item.setForeground(QColor("#ef4444"))
+                elif "downloaded" in st_lower or "added" in st_lower:
+                    status_item.setForeground(QColor("#22c55e"))
+                self.queue_table.setItem(row, 4, status_item)
+                self.queue_table.setItem(row, 5, QTableWidgetItem(""))
+                pct = q.get("progress", 0)
+                self._set_queue_item_progress(row, pct, status_text)
+    
+            remaining = sum(
+                1 for q in self.queue_items
+                if q.get("status") not in ("✓ Added to Library", "Downloaded", "✓ Downloaded (Pending Review)")
+            )
+            total = len(self.queue_items)
+            if 0 < remaining < total:
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)")
+            else:
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({total})")
+            self._schedule_filter()
+            self.save_queue()
+        finally:
+            self.queue_table.setUpdatesEnabled(True)
 
     def set_queue_filter(self, mode):
         self.queue_filter_mode = mode
@@ -2516,7 +2534,11 @@ class LibgenDialog(QDialog):
                     btn.setStyleSheet("font-weight: bold; background-color: #2b5b84; color: white; padding: 3px 10px;")
                 else:
                     btn.setStyleSheet("padding: 3px 10px;")
-        self.apply_queue_filter()
+        self._schedule_filter()
+
+    def _schedule_filter(self):
+        if hasattr(self, "_filter_timer") and not self._filter_timer.isActive():
+            self._filter_timer.start()
 
     def apply_queue_filter(self):
         if not hasattr(self, "queue_table") or not hasattr(self, "queue_items"):
@@ -2968,13 +2990,18 @@ class LibgenDialog(QDialog):
         if idx < len(self.queue_items):
             self.queue_items[idx]["status"] = status_text
             self.queue_table.setItem(idx, 4, QTableWidgetItem(status_text))
-            self.apply_queue_filter()
+            self._schedule_filter()
         
         if stage == "streaming" or stage == "segmented":
             self.side_mirror_status.appendPlainText(f"[CONN] {host}")
 
     def on_item_status(self, idx, status_text):
         if idx < len(self.queue_items):
+            dest_path = ""
+            if "|" in status_text:
+                status_text, dest_path = status_text.split("|", 1)
+                self.queue_items[idx]["dest_file"] = dest_path
+
             self.queue_items[idx]["status"] = status_text
             status_item = QTableWidgetItem(status_text)
             st_lower = status_text.lower()
@@ -2985,12 +3012,12 @@ class LibgenDialog(QDialog):
                 status_item.setForeground(QColor("#22c55e"))
                 self.queue_items[idx]["download_timestamp"] = time.time()
                 bk = self.queue_items[idx].get("book")
-                dest = self.queue_items[idx].get("dest_file", "")
+                dest = dest_path or self.queue_items[idx].get("dest_file", "")
                 if bk:
                     append_download_history(bk, dest)
             self.queue_table.setItem(idx, 4, status_item)
             self._set_queue_item_progress(idx, self.queue_items[idx].get("progress", 0), status_text)
-            self.apply_queue_filter()
+            self._schedule_filter()
             
             # Active session download counter
             if hasattr(self, "session_target_indices") and self.session_target_indices:
@@ -3279,12 +3306,16 @@ class LibgenDialog(QDialog):
         self.save_all_field_preferences()
 
     def closeEvent(self, event):
+        # Stop all timers
+        for timer_name in ['save_timer', 'neko_timer', 'cover_anim_timer', 'version_click_timer']:
+            t = getattr(self, timer_name, None)
+            if t:
+                t.stop()
+
         self._do_save_all_field_preferences()
         self.save_header_states()
-        if hasattr(self, "search_worker") and self.search_worker and self.search_worker.isRunning():
-            self.search_worker.abort()
-        if hasattr(self, "search_queue_worker") and self.search_queue_worker and self.search_queue_worker.isRunning():
-            self.search_queue_worker.abort()
+
+        # Handle UI confirmation if downloading
         if self.download_worker and self.download_worker.isRunning():
             reply = QMessageBox.question(
                 self,
@@ -3293,12 +3324,18 @@ class LibgenDialog(QDialog):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
-            if reply == QMessageBox.StandardButton.Yes:
-                self.download_worker.abort()
-                self.download_worker.wait(3000)
-                event.accept()
-            else:
+            if reply != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
+
+        # Abort and wait all workers
+        for worker_attr in ['search_worker', 'search_queue_worker', 
+                            'cover_worker', 'health_worker', 
+                            'live_mirror_worker', 'download_worker']:
+            w = getattr(self, worker_attr, None)
+            if w and w.isRunning():
+                w.abort()
+                w.wait(2000)
+
         event.accept()
 

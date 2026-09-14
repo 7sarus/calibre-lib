@@ -11,6 +11,7 @@ import time
 import shutil
 import threading
 import concurrent.futures
+from contextlib import contextmanager
 from urllib.parse import urljoin, quote_plus, urlparse
 from bs4 import BeautifulSoup
 from calibre import browser
@@ -87,6 +88,18 @@ class LibgenScraper:
     def __init__(self, mirrors=None, timeout=20):
         self.mirrors = mirrors or self.DEFAULT_MIRRORS
         self.timeout = timeout
+        self._mirror_cooldowns = {}  # mirror -> (fail_count, next_retry_time)
+
+    def _is_cooled_down(self, mirror):
+        if mirror not in self._mirror_cooldowns:
+            return True
+        fails, next_retry = self._mirror_cooldowns[mirror]
+        return time.monotonic() >= next_retry
+
+    def _record_failure(self, mirror):
+        fails = self._mirror_cooldowns.get(mirror, (0, 0))[0] + 1
+        delay = min(2 ** fails, 60)
+        self._mirror_cooldowns[mirror] = (fails, time.monotonic() + delay)
 
     def _get_browser(self):
         """Returns a thread-local cached browser instance for connection reuse."""
@@ -163,6 +176,8 @@ class LibgenScraper:
         def _search_mirror(mirror):
             if found_event.is_set() or (abort_check and abort_check()):
                 return None, mirror
+            if not self._is_cooled_down(mirror):
+                return None, mirror
             try:
                 b = self._get_browser()
 
@@ -177,16 +192,17 @@ class LibgenScraper:
                     topic_param = f"&topics%5B%5D={category}" if category else "&topics%5B%5D=l&topics%5B%5D=f"
                     search_url = f"{mirror}/index.php?req={encoded_query}{field_param}{topic_param}&res={fetch_count}"
 
-                resp = b.open(search_url, timeout=self.timeout)
-                if found_event.is_set() or (abort_check and abort_check()):
-                    return None, mirror
-                html = resp.read()
-                soup = BeautifulSoup(html, HTML_PARSER)
+                with self._open_url(b, search_url, timeout=self.timeout) as resp:
+                    if found_event.is_set() or (abort_check and abort_check()):
+                        return None, mirror
+                    html = resp.read()
+                    soup = BeautifulSoup(html, HTML_PARSER)
                 result = self._parse_search_page(soup, mirror)
                 if result:
+                    self._mirror_cooldowns.pop(mirror, None)  # Reset on success
                     return result, mirror
             except Exception:
-                pass
+                self._record_failure(mirror)
             return None, mirror
 
         books = []
@@ -557,8 +573,8 @@ class LibgenScraper:
         b.addheaders = [("User-Agent", self.USER_AGENT), ("Referer", referer)]
         
         try:
-            resp = b.open(detail_url, timeout=t)
-            soup = BeautifulSoup(resp.read(), HTML_PARSER)
+            with self._open_url(b, detail_url, timeout=t) as resp:
+                soup = BeautifulSoup(resp.read(), HTML_PARSER)
 
             # Extract direct get.php link
             get_link = soup.select_one('a[href*="get.php"]')
@@ -578,10 +594,7 @@ class LibgenScraper:
                 urljoin(detail_url, get_link["href"]) if get_link and get_link.get("href") else None
             )
 
-            # Debugging step: if it's still missing, we want to know what the HTML had
-            if not download_url:
-                with open("/tmp/failed_resolve.html", "w") as f:
-                    f.write(soup.prettify()[:5000])
+            # Removed debug HTML dump
 
             # Extract cover image (ignore blank.png if possible)
             cover_url = None
@@ -601,47 +614,50 @@ class LibgenScraper:
         Calls progress_callback(bytes_read, total_bytes) on each chunk.
         """
         b = self._get_browser()
-        resp = b.open(download_url, timeout=self.timeout * 3)
-
-        total_bytes = 0
-        try:
-            total_bytes = int(resp.headers.get("Content-Length", 0))
-        except (ValueError, TypeError):
+        with self._open_url(b, download_url, timeout=self.timeout * 3) as resp:
             total_bytes = 0
-
-        bytes_read = 0
-        chunk_size = 128 * 1024  # 128 KB
-        start_time = time.time()
-
-        with open(destination_path, "wb") as f:
-            while True:
-                if abort_check and abort_check():
-                    raise Exception("Stopped by user")
-                chunk = resp.read(chunk_size)
-                if not chunk:
-                    break
-                f.write(chunk)
-                bytes_read += len(chunk)
-                if progress_callback:
-                    elapsed = time.time() - start_time
-                    speed_kb = (bytes_read / 1024) / elapsed if elapsed > 0 else 0
-                    progress_callback(bytes_read, total_bytes, speed_kb)
-
-        elapsed = time.time() - start_time
-        if elapsed > 0 and bytes_read > 0:
-            final_speed_kb = (bytes_read / 1024.0) / elapsed
-            cdn_host = urlparse(download_url).netloc
             try:
-                from calibre_plugins.libgen_store.config import record_cdn_speed
-                record_cdn_speed(cdn_host, final_speed_kb)
-            except Exception:
+                total_bytes = int(resp.headers.get("Content-Length", 0))
+            except (ValueError, TypeError):
+                total_bytes = 0
+    
+            bytes_read = 0
+            chunk_size = 128 * 1024  # 128 KB
+            start_time = time.time()
+            last_cb_time = 0.0
+    
+            with open(destination_path, "wb") as f:
+                while True:
+                    if abort_check and abort_check():
+                        raise Exception("Stopped by user")
+                    chunk = resp.read(chunk_size)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    bytes_read += len(chunk)
+                    if progress_callback:
+                        now = time.time()
+                        if now - last_cb_time >= 0.1 or bytes_read == total_bytes:
+                            elapsed = now - start_time
+                            speed_kb = (bytes_read / 1024) / elapsed if elapsed > 0 else 0
+                            progress_callback(bytes_read, total_bytes, speed_kb)
+                            last_cb_time = now
+    
+            elapsed = time.time() - start_time
+            if elapsed > 0 and bytes_read > 0:
+                final_speed_kb = (bytes_read / 1024.0) / elapsed
+                cdn_host = urlparse(download_url).netloc
                 try:
-                    from config import record_cdn_speed
+                    from calibre_plugins.libgen_store.config import record_cdn_speed
                     record_cdn_speed(cdn_host, final_speed_kb)
                 except Exception:
-                    pass
-
-        return destination_path
+                    try:
+                        from config import record_cdn_speed
+                        record_cdn_speed(cdn_host, final_speed_kb)
+                    except Exception:
+                        pass
+    
+            return destination_path
 
     def get_fallback_detail_urls(self, detail_url):
         """
@@ -711,19 +727,19 @@ class LibgenScraper:
                 return None
 
             b = self._get_browser()
-            resp = b.open(download_url, timeout=timeout)
-            stream_url = resp.geturl()
-            headers = resp.info()
-
-            try:
-                total_bytes = int(headers.get("Content-Length", 0))
-            except (ValueError, TypeError):
-                total_bytes = 0
-
-            accepts_ranges = "bytes" in headers.get("Accept-Ranges", "").lower()
-
-            # Read only 1 byte to validate the connection, then discard the rest
-            resp.read(1)
+            with self._open_url(b, download_url, timeout=timeout) as resp:
+                stream_url = resp.geturl()
+                headers = resp.info()
+    
+                try:
+                    total_bytes = int(headers.get("Content-Length", 0))
+                except (ValueError, TypeError):
+                    total_bytes = 0
+    
+                accepts_ranges = "bytes" in headers.get("Accept-Ranges", "").lower()
+    
+                # Read only 1 byte to validate the connection, then discard the rest
+                resp.read(1)
 
             return {
                 "host": host,
@@ -768,22 +784,22 @@ class LibgenScraper:
                         "User-Agent": self.USER_AGENT,
                     },
                 )
-                resp = b.open(req, timeout=self.timeout * 2)
-                code = getattr(resp, "code", 200)
-                if code not in (200, 206):
-                    raise Exception(f"HTTP {code} from stream source")
-
-                with open(part_path, "wb") as f:
-                    while True:
-                        if abort_check and abort_check():
-                            raise Exception("Stopped by user")
-                        chunk = resp.read(chunk_size)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        bytes_written += len(chunk)
-                        if progress_chunk_cb:
-                            progress_chunk_cb(len(chunk))
+                with self._open_url(b, req, timeout=self.timeout * 2) as resp:
+                    code = getattr(resp, "code", 200)
+                    if code not in (200, 206):
+                        raise Exception(f"HTTP {code} from stream source")
+    
+                    with open(part_path, "wb") as f:
+                        while True:
+                            if abort_check and abort_check():
+                                raise Exception("Stopped by user")
+                            chunk = resp.read(chunk_size)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            bytes_written += len(chunk)
+                            if progress_chunk_cb:
+                                progress_chunk_cb(len(chunk))
 
                 if expected_len > 0 and bytes_written != expected_len:
                     raise Exception(
@@ -840,15 +856,20 @@ class LibgenScraper:
         progress_lock = threading.Lock()
         shared_bytes = [0]
         start_time = time.time()
+        last_cb = [0.0]
 
         def on_chunk(chunk_len):
             with progress_lock:
                 shared_bytes[0] += chunk_len
                 current = shared_bytes[0]
-            if progress_callback:
-                elapsed = time.time() - start_time
-                speed_kb = (current / 1024) / elapsed if elapsed > 0 else 0
-                progress_callback(current, total_bytes, speed_kb)
+                now = time.time()
+                
+                if progress_callback:
+                    if now - last_cb[0] >= 0.1 or current == total_bytes:
+                        elapsed = now - start_time
+                        speed_kb = (current / 1024) / elapsed if elapsed > 0 else 0
+                        progress_callback(current, total_bytes, speed_kb)
+                        last_cb[0] = now
 
         part_paths = [f"{destination_path}.part{i}" for i in range(num_segments)]
 
@@ -947,8 +968,8 @@ class LibgenScraper:
         try:
             b = self._get_browser()
             query_url = f"{target_mirror}/index.php?req={quote_plus(clean_title)}&columns%5B%5D=t&res=10"
-            resp = b.open(query_url, timeout=8)
-            html = resp.read()
+            with self._open_url(b, query_url, timeout=8) as resp:
+                html = resp.read()
             soup = BeautifulSoup(html, HTML_PARSER)
             candidate_books = self._parse_search_page(soup, target_mirror)
 
@@ -1161,19 +1182,19 @@ class LibgenScraper:
         try:
             url = mirror_url.strip().rstrip("/")
             # 1. Initial connection / TTFB latency
-            resp = b.open(url, timeout=timeout)
-            t_connected = time.time()
-            latency = int((t_connected - t0) * 1000)
-
-            code = getattr(resp, "code", 200)
-            if code and code >= 400:
-                return False, latency, 0.0, "0 KB/s", f"HTTP {code}"
-
-            # 2. Download transfer rate (bandwidth test on small payload)
-            t_dl_start = time.time()
-            data = resp.read()
-            dl_time = max(time.time() - t_dl_start, 0.005)
-            bytes_read = len(data)
+            with self._open_url(b, url, timeout=timeout) as resp:
+                t_connected = time.time()
+                latency = int((t_connected - t0) * 1000)
+    
+                code = getattr(resp, "code", 200)
+                if code and code >= 400:
+                    return False, latency, 0.0, "0 KB/s", f"HTTP {code}"
+    
+                # 2. Download transfer rate (bandwidth test on small payload)
+                t_dl_start = time.time()
+                data = resp.read()
+                dl_time = max(time.time() - t_dl_start, 0.005)
+                bytes_read = len(data)
 
             # If root response was empty or too small, test against a static asset
             if bytes_read < 1024:
@@ -1181,9 +1202,9 @@ class LibgenScraper:
                     try:
                         asset_url = urljoin(url + "/", test_asset.lstrip("/"))
                         t_sub = time.time()
-                        sub_resp = b.open(asset_url, timeout=timeout)
-                        sub_data = sub_resp.read()
-                        sub_time = max(time.time() - t_sub, 0.005)
+                        with self._open_url(b, asset_url, timeout=timeout) as sub_resp:
+                            sub_data = sub_resp.read()
+                            sub_time = max(time.time() - t_sub, 0.005)
                         if len(sub_data) > bytes_read:
                             bytes_read = len(sub_data)
                             dl_time = sub_time

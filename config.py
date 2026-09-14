@@ -27,7 +27,7 @@ from qt.core import (
 # Plugin Version definitions
 PLUGIN_VERSION = (1, 11, 0, "b")
 _BASE_VERSION_STR = "v1.11b"
-_BUILD_COMMIT = "57"
+_BUILD_COMMIT = "58"
 
 
 def _resolve_version_str():
@@ -75,7 +75,6 @@ prefs.defaults["show_download_stats"] = True
 prefs.defaults["fastest_cdns"] = {}
 prefs.defaults["unique_results"] = True
 prefs.defaults["fast_mode"] = False
-prefs.defaults["preferred_languages"] = ["Any"]
 prefs.defaults["save_search_history"] = False
 prefs.defaults["max_search_history"] = 50
 prefs.defaults["max_download_history"] = 50
@@ -130,13 +129,16 @@ def record_successful_mirror(mirror_url):
         prefs["last_successful_mirror"] = clean
 
 def add_custom_mirror(url):
-    url = url.strip().rstrip("/")
-    if not url.startswith("http://") and not url.startswith("https://"):
-        url = "https://" + url
-    custom = list(prefs.get("custom_mirrors", []))
-    if url not in custom:
-        custom.append(url)
-        prefs["custom_mirrors"] = custom
+    with _prefs_lock:
+        url = url.strip().rstrip("/")
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = "https://" + url
+        custom = list(prefs.get("custom_mirrors", []))
+        if url not in custom:
+            custom.append(url)
+            if len(custom) > 20:
+                custom = custom[-20:]
+            prefs["custom_mirrors"] = custom
     return url
 
 def remove_custom_mirror(url):
@@ -184,18 +186,19 @@ def set_mirror_order(sorted_mirrors):
 
 def record_cdn_speed(host, speed_kb):
     """Records CDN bandwidth and saves the top fastest CDNs to preferences."""
-    if not host or speed_kb <= 0:
-        return
-    host = host.lower().strip()
-    cdns = prefs.get("fastest_cdns", {})
-    if not isinstance(cdns, dict):
-        cdns = {}
-    prev = cdns.get(host, 0.0)
-    if speed_kb > prev:
-        cdns[host] = round(float(speed_kb), 1)
-    # Keep top 10 fastest
-    sorted_cdns = dict(sorted(cdns.items(), key=lambda item: item[1], reverse=True)[:10])
-    prefs["fastest_cdns"] = sorted_cdns
+    with _prefs_lock:
+        if not host or speed_kb <= 0:
+            return
+        host = host.lower().strip()
+        cdns = prefs.get("fastest_cdns", {})
+        if not isinstance(cdns, dict):
+            cdns = {}
+        prev = cdns.get(host, 0.0)
+        if speed_kb > prev:
+            cdns[host] = round(float(speed_kb), 1)
+        # Keep top 10 fastest
+        sorted_cdns = dict(sorted(cdns.items(), key=lambda item: item[1], reverse=True)[:10])
+        prefs["fastest_cdns"] = sorted_cdns
 
 
 def get_fastest_cdns():
@@ -259,11 +262,27 @@ def _load_search_history_raw():
     return []
 
 
+
+def _atomic_write(filepath, data):
+    import tempfile
+    import os
+    import json
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(filepath))
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, filepath)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+        raise
+
 def _save_search_history_raw(entries):
     filepath = get_search_history_filepath()
     try:
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(entries, f, ensure_ascii=False, indent=2)
+        _atomic_write(filepath, entries)
     except Exception:
         pass
 
@@ -336,8 +355,7 @@ def _load_download_history_raw():
 def _save_download_history_raw(entries):
     filepath = get_download_history_filepath()
     try:
-        with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(entries, f, ensure_ascii=False, indent=2)
+        _atomic_write(filepath, entries)
     except Exception:
         pass
 

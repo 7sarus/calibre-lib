@@ -54,6 +54,20 @@ class LibgenAction(InterfaceAction):
                 lv.pin_view.context_menu.aboutToShow.connect(self.update_author_context_menu)
                 lv.pin_view.context_menu.addAction(self.search_author_action)
 
+    def shutting_down(self):
+        if not hasattr(self, "gui") or getattr(self.gui, "library_view", None) is None:
+            return
+        for lv in [self.gui.library_view, getattr(self.gui.library_view, "pin_view", None)]:
+            if lv and hasattr(lv, "context_menu") and lv.context_menu is not None:
+                try:
+                    lv.context_menu.aboutToShow.disconnect(self.update_author_context_menu)
+                except Exception:
+                    pass
+                try:
+                    lv.context_menu.removeAction(self.search_author_action)
+                except Exception:
+                    pass
+
     def get_selected_author(self):
         """Extracts author name from the currently selected or right-clicked book."""
         try:
