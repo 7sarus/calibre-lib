@@ -51,6 +51,11 @@ from qt.core import (
     QButtonGroup,
 )
 
+try:
+    from calibre_plugins.libgen_store.progress_delegate import ProgressBarDelegate
+except ImportError:
+    from progress_delegate import ProgressBarDelegate
+
 
 from calibre_plugins.libgen_store.config import (
     prefs,
@@ -1215,66 +1220,35 @@ class LibgenDialog(QDialog):
         right_layout.addWidget(self.side_mirror_status)
         base_layout.addWidget(right_widget, stretch=1)
 
-        # Top Bar: Search Query, Field, Language, Format, and Mirror Selectors
+        # Top Panel: Clean Primary Search Bar + Collapsible Advanced Drawer
         top_panel = QVBoxLayout()
-        row1 = QHBoxLayout()
-        row2 = QHBoxLayout()
+        top_panel.setSpacing(6)
 
-        # --- Row 1 ---
+        # --- Row 1 (Primary Search Controls) ---
+        row1 = QHBoxLayout()
+        row1.setSpacing(6)
+
         row1.addWidget(QLabel("Search:"))
         self.search_input = QLineEdit(self)
+        self.search_input.setPlaceholderText("Search title, author, series, ISBN...")
+        self.search_input.setClearButtonEnabled(True)
         self.search_input.returnPressed.connect(self.start_search)
         if self.initial_query:
             self.search_input.setText(self.initial_query)
             self.search_input.selectAll()
-        row1.addWidget(self.search_input, stretch=3)
+        row1.addWidget(self.search_input, stretch=4)
 
-        # Pending / Zero-Result Searches Dropdown
-        row1.addWidget(QLabel("Pending:"))
-        self.pending_combo = QComboBox(self)
-        self.pending_combo.setToolTip("Select a failed or zero-result search to retry")
-        self.pending_combo.currentIndexChanged.connect(self.on_pending_selected)
-        row1.addWidget(self.pending_combo, stretch=1)
+        row1.addWidget(QLabel("Format:"))
+        self.format_combo = QComboBox(self)
+        self.format_combo.addItems(SUPPORTED_FORMATS)
+        cur_fmt = prefs.get("preferred_format", "Any").upper()
+        fmt_idx = self.format_combo.findText(cur_fmt)
+        if fmt_idx >= 0:
+            self.format_combo.setCurrentIndex(fmt_idx)
+        self.format_combo.currentTextChanged.connect(self.save_all_field_preferences)
+        row1.addWidget(self.format_combo)
 
-        self.pending_clear_btn = QPushButton("✕", self)
-        self.pending_clear_btn.setToolTip("Remove selected pending search query")
-        self.pending_clear_btn.setFixedWidth(24)
-        self.pending_clear_btn.clicked.connect(self.remove_selected_pending)
-        row1.addWidget(self.pending_clear_btn)
-
-        row1.addWidget(QLabel("Field:"))
-        self.field_combo = QComboBox(self)
-        self.field_combo.addItems(list(SEARCH_FIELDS.keys()))
-        cur_field = prefs.get("search_field", "All Fields")
-        f_idx = self.field_combo.findText(cur_field)
-        if f_idx >= 0:
-            self.field_combo.setCurrentIndex(f_idx)
-        self.field_combo.currentTextChanged.connect(self.save_all_field_preferences)
-        row1.addWidget(self.field_combo)
-
-        row1.addWidget(QLabel("Cat:"))
-        self.category_combo = QComboBox(self)
-        self.category_combo.addItems(list(CATEGORIES.keys()))
-        cur_cat = prefs.get("search_category", "All Categories")
-        c_idx = self.category_combo.findText(cur_cat)
-        if c_idx >= 0:
-            self.category_combo.setCurrentIndex(c_idx)
-        self.category_combo.currentTextChanged.connect(self.save_all_field_preferences)
-        row1.addWidget(self.category_combo)
-
-        self.search_btn = QPushButton("Search", self)
-        self.search_btn.setStyleSheet("font-weight: bold; background-color: #2b5b84; color: white; padding: 5px 12px;")
-        self.search_btn.clicked.connect(self.start_search)
-        row1.addWidget(self.search_btn)
-
-        self.stop_search_btn = QPushButton("Stop Search", self)
-        self.stop_search_btn.setStyleSheet("font-weight: bold; background-color: #8c2a2a; color: white; padding: 5px 12px;")
-        self.stop_search_btn.setVisible(False)
-        self.stop_search_btn.clicked.connect(self.stop_search)
-        row1.addWidget(self.stop_search_btn)
-
-        # --- Row 2 ---
-        row2.addWidget(QLabel("Lang:"))
+        row1.addWidget(QLabel("Lang:"))
         self.lang_combo = CheckableComboBox(self)
         self.lang_combo.setMinimumWidth(85)
         saved_langs = prefs.get("preferred_languages")
@@ -1283,28 +1257,83 @@ class LibgenDialog(QDialog):
             saved_langs = [single] if single else ["English"]
         self.lang_combo.add_checkable_items(SUPPORTED_LANGUAGES, saved_langs)
         self.lang_combo.selection_changed.connect(self.save_all_field_preferences)
-        row2.addWidget(self.lang_combo)
+        row1.addWidget(self.lang_combo)
 
-        row2.addWidget(QLabel("Format:"))
-        self.format_combo = QComboBox(self)
-        self.format_combo.addItems(SUPPORTED_FORMATS)
-        cur_fmt = prefs.get("preferred_format", "Any").upper()
-        fmt_idx = self.format_combo.findText(cur_fmt)
-        if fmt_idx >= 0:
-            self.format_combo.setCurrentIndex(fmt_idx)
-        self.format_combo.currentTextChanged.connect(self.save_all_field_preferences)
-        row2.addWidget(self.format_combo)
+        self.search_btn = QPushButton("Search", self)
+        self.search_btn.setStyleSheet("font-weight: bold; background-color: #2b5b84; color: white; padding: 5px 14px;")
+        self.search_btn.clicked.connect(self.start_search)
+        row1.addWidget(self.search_btn)
 
-        row2.addWidget(QLabel("Mirror:"))
+        self.stop_search_btn = QPushButton("Stop Search", self)
+        self.stop_search_btn.setStyleSheet("font-weight: bold; background-color: #8c2a2a; color: white; padding: 5px 14px;")
+        self.stop_search_btn.setVisible(False)
+        self.stop_search_btn.clicked.connect(self.stop_search)
+        row1.addWidget(self.stop_search_btn)
+
+        self.hardcover_btn = QPushButton("📚 Hardcover", self)
+        self.hardcover_btn.setToolTip("Import and queue books from your Hardcover.app shelves / lists")
+        self.hardcover_btn.setStyleSheet("font-weight: bold; padding: 5px 10px;")
+        self.hardcover_btn.clicked.connect(self.open_hardcover_dialog)
+        row1.addWidget(self.hardcover_btn)
+
+        self.toggle_filters_btn = QPushButton("⚙ Filters ▾", self)
+        self.toggle_filters_btn.setToolTip("Toggle secondary search parameters (Field, Category, Mirror, History, Retries)")
+        self.toggle_filters_btn.setStyleSheet("padding: 5px 10px;")
+        self.toggle_filters_btn.clicked.connect(self.toggle_advanced_filters)
+        row1.addWidget(self.toggle_filters_btn)
+
+        top_panel.addLayout(row1)
+
+        # --- Collapsible Advanced Drawer (Row 2) ---
+        self.advanced_filters_widget = QWidget(self)
+        self.advanced_filters_widget.setObjectName("advanced_filters_widget")
+        self.advanced_filters_widget.setStyleSheet(
+            "#advanced_filters_widget { background-color: #1a202c; border: 1px solid #2d3748; border-radius: 6px; padding: 4px; }"
+        )
+        adv_vlayout = QVBoxLayout(self.advanced_filters_widget)
+        adv_vlayout.setContentsMargins(8, 6, 8, 6)
+        adv_vlayout.setSpacing(6)
+
+        adv_row1 = QHBoxLayout()
+        adv_row1.setSpacing(8)
+
+        adv_row1.addWidget(QLabel("Field:"))
+        self.field_combo = QComboBox(self)
+        self.field_combo.addItems(list(SEARCH_FIELDS.keys()))
+        cur_field = prefs.get("search_field", "All Fields")
+        f_idx = self.field_combo.findText(cur_field)
+        if f_idx >= 0:
+            self.field_combo.setCurrentIndex(f_idx)
+        self.field_combo.currentTextChanged.connect(self.save_all_field_preferences)
+        adv_row1.addWidget(self.field_combo)
+
+        adv_row1.addWidget(QLabel("Cat:"))
+        self.category_combo = QComboBox(self)
+        self.category_combo.addItems(list(CATEGORIES.keys()))
+        cur_cat = prefs.get("search_category", "All Categories")
+        c_idx = self.category_combo.findText(cur_cat)
+        if c_idx >= 0:
+            self.category_combo.setCurrentIndex(c_idx)
+        self.category_combo.currentTextChanged.connect(self.save_all_field_preferences)
+        adv_row1.addWidget(self.category_combo)
+
+        adv_row1.addWidget(QLabel("Max:"))
+        self.max_results_spinbox = QSpinBox(self)
+        self.max_results_spinbox.setRange(1, 1000)
+        self.max_results_spinbox.setValue(int(prefs.get("max_results", 5)))
+        self.max_results_spinbox.valueChanged.connect(self.save_all_field_preferences)
+        adv_row1.addWidget(self.max_results_spinbox)
+
+        adv_row1.addWidget(QLabel("Mirror:"))
         self.mirror_combo = QComboBox(self)
         self.update_mirror_combobox()
         self.mirror_combo.currentTextChanged.connect(self.save_all_field_preferences)
-        row2.addWidget(self.mirror_combo)
+        adv_row1.addWidget(self.mirror_combo)
 
         self.fetch_mirrors_btn = QPushButton("Fetch Live")
         self.fetch_mirrors_btn.setToolTip("Fetch active mirrors from open-slum.org")
         self.fetch_mirrors_btn.clicked.connect(self.manual_fetch_mirrors)
-        row2.addWidget(self.fetch_mirrors_btn)
+        adv_row1.addWidget(self.fetch_mirrors_btn)
 
         self.filter_combo = QComboBox(self)
         self.filter_combo.addItems(FILTER_MODES)
@@ -1313,20 +1342,13 @@ class LibgenDialog(QDialog):
         if m_idx >= 0:
             self.filter_combo.setCurrentIndex(m_idx)
         self.filter_combo.currentTextChanged.connect(self.save_all_field_preferences)
-        row2.addWidget(self.filter_combo)
-
-        row2.addWidget(QLabel("Max:"))
-        self.max_results_spinbox = QSpinBox(self)
-        self.max_results_spinbox.setRange(1, 1000)
-        self.max_results_spinbox.setValue(int(prefs.get("max_results", 5)))
-        self.max_results_spinbox.valueChanged.connect(self.save_all_field_preferences)
-        row2.addWidget(self.max_results_spinbox)
+        adv_row1.addWidget(self.filter_combo)
 
         self.unique_checkbox = QCheckBox("Unique", self)
         self.unique_checkbox.setToolTip("Filter out duplicate books (same title, author, and format)")
         self.unique_checkbox.setChecked(bool(prefs.get("unique_results", True)))
         self.unique_checkbox.stateChanged.connect(self.save_all_field_preferences)
-        row2.addWidget(self.unique_checkbox)
+        adv_row1.addWidget(self.unique_checkbox)
 
         self.history_checkbox = QCheckBox("History", self)
         self.history_checkbox.setToolTip(
@@ -1334,24 +1356,40 @@ class LibgenDialog(QDialog):
         )
         self.history_checkbox.setChecked(bool(prefs.get("save_search_history", False)))
         self.history_checkbox.stateChanged.connect(self.on_history_toggled)
-        row2.addWidget(self.history_checkbox)
+        adv_row1.addWidget(self.history_checkbox)
 
         self.history_settings_btn = QPushButton("⚙", self)
         self.history_settings_btn.setToolTip("Configure search & download history limits and auto-retention")
-        self.history_settings_btn.setFixedWidth(28)
+        self.history_settings_btn.setFixedWidth(26)
         self.history_settings_btn.clicked.connect(self.open_history_settings)
-        row2.addWidget(self.history_settings_btn)
+        adv_row1.addWidget(self.history_settings_btn)
 
-        self.hardcover_btn = QPushButton("📚 Hardcover", self)
-        self.hardcover_btn.setToolTip("Import and queue books from your Hardcover.app shelves / lists")
-        self.hardcover_btn.setStyleSheet("font-weight: bold;")
-        self.hardcover_btn.clicked.connect(self.open_hardcover_dialog)
-        row2.addWidget(self.hardcover_btn)
-        
-        row2.addStretch(1)
+        # Pending Searches Sub-widget (only visible if pending items exist)
+        self.pending_widget = QWidget(self)
+        pending_layout = QHBoxLayout(self.pending_widget)
+        pending_layout.setContentsMargins(0, 0, 0, 0)
+        pending_layout.setSpacing(4)
+        pending_layout.addWidget(QLabel("Pending:"))
+        self.pending_combo = QComboBox(self)
+        self.pending_combo.setToolTip("Select a failed or zero-result search to retry")
+        self.pending_combo.currentIndexChanged.connect(self.on_pending_selected)
+        pending_layout.addWidget(self.pending_combo)
 
-        top_panel.addLayout(row1)
-        top_panel.addLayout(row2)
+        self.pending_clear_btn = QPushButton("✕", self)
+        self.pending_clear_btn.setToolTip("Remove selected pending search query")
+        self.pending_clear_btn.setFixedWidth(24)
+        self.pending_clear_btn.clicked.connect(self.remove_selected_pending)
+        pending_layout.addWidget(self.pending_clear_btn)
+        adv_row1.addWidget(self.pending_widget)
+
+        adv_row1.addStretch(1)
+        adv_vlayout.addLayout(adv_row1)
+
+        # Restore expanded/collapsed state from preferences
+        show_adv = bool(prefs.get("show_advanced_filters", False))
+        self.advanced_filters_widget.setVisible(show_adv)
+        self.toggle_filters_btn.setText("⚙ Filters ▴" if show_adv else "⚙ Filters ▾")
+        top_panel.addWidget(self.advanced_filters_widget)
 
         # Batch Calibre Records Search Queue Bar (if books selected from Calibre)
         self.search_queue_bar = QWidget(self)
@@ -1405,6 +1443,15 @@ class LibgenDialog(QDialog):
         self.search_mirror_label.setStyleSheet("font-weight: bold; color: #2b5b84;")
         search_status_box.addWidget(self.search_mirror_label, stretch=2)
 
+        self.search_progress_bar = QProgressBar(self)
+        self.search_progress_bar.setFixedHeight(16)
+        self.search_progress_bar.setTextVisible(True)
+        self.search_progress_bar.setStyleSheet(
+            "QProgressBar { border: 1px solid #374151; border-radius: 4px; background-color: #1f2937; text-align: center; font-size: 10px; font-weight: bold; color: #f3f4f6; } "
+            "QProgressBar::chunk { background-color: #2563eb; border-radius: 3px; }"
+        )
+        self.search_progress_bar.setVisible(False)
+        search_status_box.addWidget(self.search_progress_bar, stretch=3)
 
         results_layout.addLayout(search_status_box)
 
@@ -1482,6 +1529,18 @@ class LibgenDialog(QDialog):
         filter_bar.addStretch(1)
         queue_layout.addLayout(filter_bar)
 
+        # Dedicated Session / Overall Bulk Download Progress Bar
+        self.bulk_progress_bar = QProgressBar(self)
+        self.bulk_progress_bar.setFixedHeight(18)
+        self.bulk_progress_bar.setTextVisible(True)
+        self.bulk_progress_bar.setFormat("Bulk Download: Ready (0/0)")
+        self.bulk_progress_bar.setStyleSheet(
+            "QProgressBar { border: 1px solid #374151; border-radius: 4px; background-color: #1f2937; text-align: center; font-size: 11px; font-weight: bold; color: #f3f4f6; } "
+            "QProgressBar::chunk { background-color: #2563eb; border-radius: 3px; }"
+        )
+        self.bulk_progress_bar.setVisible(False)
+        queue_layout.addWidget(self.bulk_progress_bar)
+
         self.queue_table = QTableWidget(self)
         self.queue_table.setColumnCount(7)
         self.queue_table.setHorizontalHeaderLabels([
@@ -1496,10 +1555,20 @@ class LibgenDialog(QDialog):
         self.queue_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)
         self.queue_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.queue_table.itemSelectionChanged.connect(self.on_table_selection_changed)
+        self.queue_table.setItemDelegateForColumn(6, ProgressBarDelegate(self.queue_table))
         queue_layout.addWidget(self.queue_table)
 
-        # Scrolling Live Activity Log
-        queue_layout.addWidget(QLabel("Live Download & Mirror Failover Activity:"))
+        # Collapsible Live Activity Log
+        log_header_box = QHBoxLayout()
+        self.log_toggle_btn = QPushButton("▶ Live Activity Log", self)
+        self.log_toggle_btn.setFlat(True)
+        self.log_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.log_toggle_btn.setStyleSheet("text-align: left; font-weight: bold; color: #9ca3af; font-size: 11px; padding: 2px;")
+        self.log_toggle_btn.clicked.connect(self.toggle_activity_log)
+        log_header_box.addWidget(self.log_toggle_btn)
+        log_header_box.addStretch(1)
+        queue_layout.addLayout(log_header_box)
+
         self.log_view = QPlainTextEdit(self)
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(400)
@@ -1508,31 +1577,30 @@ class LibgenDialog(QDialog):
             "background-color: #181818; color: #4af626; font-family: monospace; font-size: 11px; padding: 6px; border: 1px solid #333; border-radius: 4px;"
         )
         self.log_view.setPlaceholderText("Live download events, mirror failovers, and streaming chunks will appear here...")
+        self.log_view.setVisible(False)
         queue_layout.addWidget(self.log_view)
 
         # Queue Bottom Buttons
         queue_btn_bar = QHBoxLayout()
-        self.remove_queue_btn = QPushButton("Remove Selected", self)
-        self.remove_queue_btn.clicked.connect(self.remove_from_queue)
-        queue_btn_bar.addWidget(self.remove_queue_btn)
-
         self.clear_downloaded_btn = QPushButton("Clear Downloaded", self)
         self.clear_downloaded_btn.setToolTip("Remove downloaded / completed items from queue")
         self.clear_downloaded_btn.clicked.connect(self.clear_downloaded_items)
         queue_btn_bar.addWidget(self.clear_downloaded_btn)
 
-        self.clear_queue_btn = QPushButton("Clear Queue", self)
-        self.clear_queue_btn.clicked.connect(self.clear_queue)
-        queue_btn_bar.addWidget(self.clear_queue_btn)
+        self.remove_queue_btn = QPushButton("Remove Selected", self)
+        self.remove_queue_btn.clicked.connect(self.remove_from_queue)
+        queue_btn_bar.addWidget(self.remove_queue_btn)
 
         self.retry_failed_btn = QPushButton("Retry Failed", self)
         self.retry_failed_btn.setStyleSheet("font-weight: bold; padding: 6px 14px;")
         self.retry_failed_btn.clicked.connect(self.retry_failed_downloads)
         queue_btn_bar.addWidget(self.retry_failed_btn)
 
-        self.auto_retry_checkbox = QCheckBox("Retry until all articles are downloaded", self)
-        self.auto_retry_checkbox.setChecked(False)
-        queue_btn_bar.addWidget(self.auto_retry_checkbox)
+        self.clear_queue_btn = QPushButton("Clear Queue", self)
+        self.clear_queue_btn.clicked.connect(self.clear_queue)
+        queue_btn_bar.addWidget(self.clear_queue_btn)
+
+        queue_btn_bar.addSpacing(16)
 
         self.fast_mode_checkbox = QCheckBox("⚡ Fast Mode", self)
         self.fast_mode_checkbox.setToolTip("Fast Mode: 3s mirror probe, skips dead/troubled downloads immediately to Failed list")
@@ -1540,7 +1608,11 @@ class LibgenDialog(QDialog):
         self.fast_mode_checkbox.stateChanged.connect(self.save_all_field_preferences)
         queue_btn_bar.addWidget(self.fast_mode_checkbox)
 
-        queue_btn_bar.addStretch()
+        self.auto_retry_checkbox = QCheckBox("Retry until all articles are downloaded", self)
+        self.auto_retry_checkbox.setChecked(False)
+        queue_btn_bar.addWidget(self.auto_retry_checkbox)
+
+        queue_btn_bar.addStretch(1)
 
         self.stop_download_btn = QPushButton("Stop Download", self)
         self.stop_download_btn.setStyleSheet("font-weight: bold; background-color: #8c2a2a; color: white; padding: 6px 14px;")
@@ -1660,6 +1732,8 @@ class LibgenDialog(QDialog):
             self.pending_combo.setEnabled(False)
             if hasattr(self, "pending_clear_btn"):
                 self.pending_clear_btn.setEnabled(False)
+            if hasattr(self, "pending_widget"):
+                self.pending_widget.setVisible(False)
         else:
             self.pending_combo.addItem(f"Pending ({len(pending)})...", None)
             for p in pending:
@@ -1667,6 +1741,8 @@ class LibgenDialog(QDialog):
             self.pending_combo.setEnabled(True)
             if hasattr(self, "pending_clear_btn"):
                 self.pending_clear_btn.setEnabled(True)
+            if hasattr(self, "pending_widget"):
+                self.pending_widget.setVisible(True)
         self.pending_combo.blockSignals(False)
 
     def on_pending_selected(self, idx):
@@ -1989,6 +2065,15 @@ class LibgenDialog(QDialog):
                 self.history_checkbox.setChecked(bool(prefs.get("save_search_history", False)))
             self.setup_search_completer()
 
+    def toggle_advanced_filters(self):
+        if not hasattr(self, "advanced_filters_widget"):
+            return
+        new_state = not self.advanced_filters_widget.isVisible()
+        self.advanced_filters_widget.setVisible(new_state)
+        if hasattr(self, "toggle_filters_btn"):
+            self.toggle_filters_btn.setText("⚙ Filters ▴" if new_state else "⚙ Filters ▾")
+        prefs["show_advanced_filters"] = new_state
+
     # --- Search Handlers ---
     def start_search(self):
         query = self.search_input.text().strip()
@@ -2003,7 +2088,10 @@ class LibgenDialog(QDialog):
         self.stop_search_btn.setEnabled(True)
         self.stop_search_btn.setText("Stop Search")
 
-
+        if hasattr(self, "search_progress_bar"):
+            self.search_progress_bar.setVisible(True)
+            self.search_progress_bar.setRange(0, 0)
+            self.search_progress_bar.setFormat(f"Searching LibGen mirrors for '{query}'...")
 
         self.status_label.setText(f"Searching LibGen for '{query}'...")
         self.search_mirror_label.setText(f"Connecting to LibGen mirrors for '{query}'...")
@@ -2051,6 +2139,8 @@ class LibgenDialog(QDialog):
             self.status_label.setText("Search stopped by user.")
             self.search_mirror_label.setText("Search stopped by user.")
             self.search_worker.abort()
+        if hasattr(self, "search_progress_bar"):
+            self.search_progress_bar.setVisible(False)
         self.stop_search_btn.setVisible(False)
         self.search_btn.setVisible(True)
         self.search_btn.setEnabled(True)
@@ -2062,8 +2152,18 @@ class LibgenDialog(QDialog):
         if target_count > 0:
             msg = f"Querying mirrors [{idx}/{total}] • 📦 {found_count}/{target_count} artifacts found ({host})"
             self.set_tab_text_for_widget(getattr(self, "tab_results", None), f"Search Results ({found_count})")
+            if hasattr(self, "search_progress_bar"):
+                self.search_progress_bar.setVisible(True)
+                self.search_progress_bar.setRange(0, target_count)
+                self.search_progress_bar.setValue(found_count)
+                self.search_progress_bar.setFormat(f"Found {found_count}/{target_count} ({host})")
         else:
             msg = f"Querying mirror [{idx}/{total}]: {host} ({mirror})"
+            if hasattr(self, "search_progress_bar"):
+                self.search_progress_bar.setVisible(True)
+                self.search_progress_bar.setRange(0, total)
+                self.search_progress_bar.setValue(idx)
+                self.search_progress_bar.setFormat(f"Mirror {idx}/{total}: {host}")
 
         self.status_label.setText(msg)
         self.status_label.setToolTip(mirror)
@@ -2074,6 +2174,8 @@ class LibgenDialog(QDialog):
         self.search_btn.setVisible(True)
         self.search_btn.setEnabled(True)
         self.stop_search_btn.setVisible(False)
+        if hasattr(self, "search_progress_bar"):
+            self.search_progress_bar.setVisible(False)
 
         host = urlparse(mirror_used).netloc if mirror_used else "mirror"
         success_text = f"✓ Found {len(books)} artifacts via {host}." if mirror_used else f"✓ Found {len(books)} artifacts."
@@ -2095,6 +2197,8 @@ class LibgenDialog(QDialog):
         self.search_btn.setVisible(True)
         self.search_btn.setEnabled(True)
         self.stop_search_btn.setVisible(False)
+        if hasattr(self, "search_progress_bar"):
+            self.search_progress_bar.setVisible(False)
 
         self.status_label.setText(f"Search failed: {err_msg}")
         self.search_mirror_label.setText(f"Search failed: {err_msg}")
@@ -2121,6 +2225,12 @@ class LibgenDialog(QDialog):
         self.search_btn.setEnabled(False)
 
         total_recs = len(self.selected_books)
+        if hasattr(self, "search_progress_bar"):
+            self.search_progress_bar.setVisible(True)
+            self.search_progress_bar.setRange(0, total_recs)
+            self.search_progress_bar.setValue(0)
+            self.search_progress_bar.setFormat(f"Queue Search: 0/{total_recs} records")
+
         self.status_label.setText(f"Starting serialized search across {total_recs} Calibre book record(s)...")
         self.search_mirror_label.setText(f"Serialized search: 0/{total_recs} records processed")
         self.append_log(f"--- Starting Serialized Search Queue ({total_recs} books, max 2 results/book) ---")
@@ -2151,10 +2261,17 @@ class LibgenDialog(QDialog):
             self.stop_queue_search_btn.setText("Stopping...")
             self.status_label.setText("Stopping serialized search queue...")
             self.search_queue_worker.abort()
+        if hasattr(self, "search_progress_bar"):
+            self.search_progress_bar.setVisible(False)
 
     def on_search_queue_progress(self, idx, total, title, status_msg):
         self.status_label.setText(f"[{idx}/{total}] {status_msg}")
         self.search_mirror_label.setText(f"Batch Search [{idx}/{total}]: {title}")
+        if hasattr(self, "search_progress_bar"):
+            self.search_progress_bar.setVisible(True)
+            self.search_progress_bar.setRange(0, total)
+            self.search_progress_bar.setValue(idx)
+            self.search_progress_bar.setFormat(f"Record {idx}/{total}: {title[:32]}")
         self.append_log(f"[Search Queue] {status_msg}")
 
     def on_search_queue_finished(self, all_results, matched_cnt, failed_cnt):
@@ -2162,6 +2279,8 @@ class LibgenDialog(QDialog):
         self.start_queue_search_btn.setEnabled(True)
         self.stop_queue_search_btn.setVisible(False)
         self.search_btn.setEnabled(True)
+        if hasattr(self, "search_progress_bar"):
+            self.search_progress_bar.setVisible(False)
 
         self.search_results = all_results
         self.populate_results_table()
@@ -2336,6 +2455,26 @@ class LibgenDialog(QDialog):
         if self.queue_items:
             self.update_queue_table()
 
+    def _set_queue_item_progress(self, row, percent, status_text=None):
+        if row >= self.queue_table.rowCount():
+            return
+        item = self.queue_table.item(row, 6)
+        if not item:
+            item = QTableWidgetItem(f"{percent}%")
+            self.queue_table.setItem(row, 6, item)
+        item.setData(Qt.ItemDataRole.UserRole, int(percent))
+        if status_text is not None:
+            item.setData(Qt.ItemDataRole.UserRole + 1, str(status_text))
+        item.setText(f"{percent}%")
+
+    def toggle_activity_log(self, force_open=False):
+        if not hasattr(self, "log_view"):
+            return
+        show = True if force_open else (not self.log_view.isVisible())
+        self.log_view.setVisible(show)
+        if hasattr(self, "log_toggle_btn"):
+            self.log_toggle_btn.setText("▼ Live Activity Log" if show else "▶ Live Activity Log")
+
     def update_queue_table(self):
         self.queue_table.setRowCount(len(self.queue_items))
         for row, q in enumerate(self.queue_items):
@@ -2354,9 +2493,7 @@ class LibgenDialog(QDialog):
             self.queue_table.setItem(row, 4, status_item)
             self.queue_table.setItem(row, 5, QTableWidgetItem(""))
             pct = q.get("progress", 0)
-            filled = pct // 10
-            ascii_bar = "█" * filled + "░" * (10 - filled)
-            self.queue_table.setItem(row, 6, QTableWidgetItem(f"[{ascii_bar}] {pct}%"))
+            self._set_queue_item_progress(row, pct, status_text)
 
         remaining = sum(
             1 for q in self.queue_items
@@ -2439,6 +2576,9 @@ class LibgenDialog(QDialog):
                 self.queue_filter_btns["Failed"].setText(f"Failed ({failed_cnt})")
 
     def clear_downloaded_items(self):
+        if hasattr(self, 'download_worker') and self.download_worker and self.download_worker.isRunning():
+            QMessageBox.warning(self, "Download in Progress", "Please wait or stop the current download before modifying the queue.")
+            return
         self.queue_items = [
             q for q in self.queue_items
             if not ("downloaded" in str(q.get("status", "")).lower() or "added" in str(q.get("status", "")).lower())
@@ -2446,13 +2586,22 @@ class LibgenDialog(QDialog):
         self.update_queue_table()
 
     def remove_from_queue(self):
+        if hasattr(self, 'download_worker') and self.download_worker and self.download_worker.isRunning():
+            QMessageBox.warning(self, "Download in Progress", "Please wait or stop the current download before modifying the queue.")
+            return
         selected_rows = sorted(set(idx.row() for idx in self.queue_table.selectedIndexes()), reverse=True)
         for r in selected_rows:
             del self.queue_items[r]
         self.update_queue_table()
 
     def clear_queue(self):
+        if hasattr(self, 'download_worker') and self.download_worker and self.download_worker.isRunning():
+            QMessageBox.warning(self, "Download in Progress", "Please wait or stop the current download before modifying the queue.")
+            return
         self.queue_items.clear()
+        self.session_target_indices = []
+        if hasattr(self, "bulk_progress_bar"):
+            self.bulk_progress_bar.setVisible(False)
         self.update_queue_table()
 
     # --- Mirrors & Health Handlers ---
@@ -2707,7 +2856,7 @@ class LibgenDialog(QDialog):
                 item["progress"] = 0
                 self.queue_table.setItem(idx, 4, QTableWidgetItem("Queued"))
                 self.queue_table.setItem(idx, 5, QTableWidgetItem("-"))
-                self.queue_table.setItem(idx, 6, QTableWidgetItem("[░░░░░░░░░░] 0%"))
+                self._set_queue_item_progress(idx, 0, "Queued")
                 failed_indices.append(idx)
 
         if not failed_indices:
@@ -2756,6 +2905,19 @@ class LibgenDialog(QDialog):
         self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)")
         self.append_log(f"--- Starting Bulk Download: {remaining} remaining item(s) ---")
 
+        if hasattr(self, "remove_queue_btn"):
+            self.remove_queue_btn.setEnabled(False)
+        if hasattr(self, "clear_downloaded_btn"):
+            self.clear_downloaded_btn.setEnabled(False)
+        if hasattr(self, "clear_queue_btn"):
+            self.clear_queue_btn.setEnabled(False)
+
+        if hasattr(self, "bulk_progress_bar"):
+            self.bulk_progress_bar.setVisible(True)
+            self.bulk_progress_bar.setMaximum(self.session_total)
+            self.bulk_progress_bar.setValue(0)
+            self.bulk_progress_bar.setFormat(f"Bulk Download: 0/{self.session_total} books (0%)")
+
         do_auto_retry = False
         if hasattr(self, 'auto_retry_checkbox'):
             do_auto_retry = self.auto_retry_checkbox.isChecked()
@@ -2787,6 +2949,12 @@ class LibgenDialog(QDialog):
             self.stop_download_btn.setEnabled(True)
             self.start_download_btn.setVisible(True)
             self.start_download_btn.setEnabled(True)
+        if hasattr(self, "remove_queue_btn"):
+            self.remove_queue_btn.setEnabled(True)
+        if hasattr(self, "clear_downloaded_btn"):
+            self.clear_downloaded_btn.setEnabled(True)
+        if hasattr(self, "clear_queue_btn"):
+            self.clear_queue_btn.setEnabled(True)
 
     def on_link_trying(self, idx, url, stage):
         host = urlparse(url).netloc or url
@@ -2812,6 +2980,7 @@ class LibgenDialog(QDialog):
             st_lower = status_text.lower()
             if "failed" in st_lower or "error" in st_lower or "skipped" in st_lower:
                 status_item.setForeground(QColor("#ef4444"))
+                self.toggle_activity_log(force_open=True)
             elif "downloaded" in st_lower or "added" in st_lower:
                 status_item.setForeground(QColor("#22c55e"))
                 self.queue_items[idx]["download_timestamp"] = time.time()
@@ -2820,19 +2989,26 @@ class LibgenDialog(QDialog):
                 if bk:
                     append_download_history(bk, dest)
             self.queue_table.setItem(idx, 4, status_item)
+            self._set_queue_item_progress(idx, self.queue_items[idx].get("progress", 0), status_text)
             self.apply_queue_filter()
             
             # Active session download counter
             if hasattr(self, "session_target_indices") and self.session_target_indices:
                 completed = sum(
                     1 for i in self.session_target_indices 
-                    if self.queue_items[i].get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"]
+                    if i < len(self.queue_items) and self.queue_items[i].get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"]
                 )
                 self.session_completed = completed
                 total = getattr(self, "session_total", len(self.session_target_indices))
                 remaining = max(0, total - completed)
                 self.status_label.setText(f"{completed}/{total} downloaded ({remaining} remaining)")
                 self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
+                if hasattr(self, "bulk_progress_bar") and total > 0:
+                    self.bulk_progress_bar.setVisible(True)
+                    self.bulk_progress_bar.setMaximum(total)
+                    self.bulk_progress_bar.setValue(completed)
+                    pct_tot = int((completed / total) * 100)
+                    self.bulk_progress_bar.setFormat(f"Bulk Download: {completed}/{total} books ({pct_tot}%)")
             else:
                 downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
                 remaining = max(0, len(self.queue_items) - downloaded)
@@ -2844,20 +3020,25 @@ class LibgenDialog(QDialog):
             percent = int((bytes_read / total_bytes) * 100)
             if idx < len(self.queue_items):
                 self.queue_items[idx]["progress"] = percent
-                filled = percent // 10
-                ascii_bar = "█" * filled + "░" * (10 - filled)
-                self.queue_table.setItem(idx, 6, QTableWidgetItem(f"[{ascii_bar}] {percent}%"))
+                self._set_queue_item_progress(idx, percent, self.queue_items[idx].get("status", "Downloading"))
                 self.queue_table.setItem(idx, 5, QTableWidgetItem(f"{speed_kb:.1f} KB/s"))
             
             if hasattr(self, "session_target_indices") and self.session_target_indices:
                 completed = sum(
                     1 for i in self.session_target_indices 
-                    if self.queue_items[i].get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"]
+                    if i < len(self.queue_items) and self.queue_items[i].get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"]
                 )
+                self.session_completed = completed
                 total = getattr(self, "session_total", len(self.session_target_indices))
                 remaining = max(0, total - completed)
                 self.status_label.setText(f"{completed}/{total} downloaded ({remaining} remaining)")
                 self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
+                if hasattr(self, "bulk_progress_bar") and total > 0:
+                    self.bulk_progress_bar.setVisible(True)
+                    self.bulk_progress_bar.setMaximum(total)
+                    self.bulk_progress_bar.setValue(completed)
+                    pct_tot = int((completed / total) * 100)
+                    self.bulk_progress_bar.setFormat(f"Bulk Download: {completed}/{total} books ({pct_tot}%) • {speed_kb:.1f} KB/s")
             else:
                 downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
                 remaining = max(0, len(self.queue_items) - downloaded)
@@ -2888,6 +3069,13 @@ class LibgenDialog(QDialog):
         self.start_download_btn.setVisible(True)
         self.start_download_btn.setEnabled(True)
 
+        if hasattr(self, "remove_queue_btn"):
+            self.remove_queue_btn.setEnabled(True)
+        if hasattr(self, "clear_downloaded_btn"):
+            self.clear_downloaded_btn.setEnabled(True)
+        if hasattr(self, "clear_queue_btn"):
+            self.clear_queue_btn.setEnabled(True)
+
         import time
         elapsed = 1
         if hasattr(self, 'bulk_start_time') and self.bulk_start_time:
@@ -2897,6 +3085,12 @@ class LibgenDialog(QDialog):
             time_str = f"{elapsed // 60}m {elapsed % 60}s"
         else:
             time_str = f"{elapsed}s"
+
+        if hasattr(self, "bulk_progress_bar"):
+            total = getattr(self, "session_total", len(downloaded_items))
+            self.bulk_progress_bar.setMaximum(total if total > 0 else 1)
+            self.bulk_progress_bar.setValue(len(downloaded_items))
+            self.bulk_progress_bar.setFormat(f"Bulk: {len(downloaded_items)}/{total} completed in {time_str}")
 
         # Calculate exact total bytes transferred across downloaded items
         total_bytes = 0

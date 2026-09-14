@@ -2,6 +2,12 @@
 
 ## [v1.11b] - 2026-09-15
 
+- **Streamlined Top Search Bar:** Clean primary row with search input, format, language, search, and Hardcover; secondary parameters tucked into an expandable `[⚙ Filters ▾]` drawer that persists its state across sessions.
+- **Modern Vector Progress Bars:** Replaced retro ASCII progress bars (`[████░░░░░░]`) with native `ProgressBarDelegate` rendering smooth rounded progress bars with live percentages and status badges.
+- **Dedicated Bulk Download Progress Bar:** Added an overall session progress bar in the Queue tab showing batch completion (`X / Y books (Z%)`) and bandwidth.
+- **Search Progress Bar:** Added an animated progress bar in the search tab for live mirror queries and serialized Calibre search steps.
+- **Collapsible Activity Log:** Converted the static 120px activity log into an expandable panel (`▶ Live Activity Log`) to maximize table rows.
+- **IndexError & Download Race Fix:** Resolved `IndexError` in `on_item_progress` / `on_item_status` with bounds checking and protected queue modifications during active downloads.
 - **Reorderable Dialog Tabs:** Tabs can now be rearranged via drag-and-drop (`QTabWidget.setMovable(True)`), with dynamic tab switching and order persistence across restarts.
 - **Queue Segmentation & Retention Policy:** Separate views for `Queued`, `Downloading`, `Downloaded`, and `Failed` (removed "All"). Auto-prunes history records older than $X$ days with configurable history limits.
 - **Persistent Table Column Widths:** Preserves header column dimensions across dialog restarts for search results, queue, and mirrors tables.
@@ -10,6 +16,7 @@
 - **⚡ Fast Mode:** Probes mirrors with a tight 3s timeout, instantly routing dead or slow mirrors to the Failed queue for rapid recovery.
 - **Discard Dead Mirrors:** One-click removal of failed or unreachable mirrors after connection tests.
 - **Qt Event Loop Fix:** Resolved `QApplication` import error during batch event processing.
+
 
 ## [v1.0.1 "Godzila"] - 2026-09-12
 

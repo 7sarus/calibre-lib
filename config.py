@@ -27,7 +27,7 @@ from qt.core import (
 # Plugin Version definitions
 PLUGIN_VERSION = (1, 11, 0, "b")
 _BASE_VERSION_STR = "v1.11b"
-_BUILD_COMMIT = "56"
+_BUILD_COMMIT = "57"
 
 
 def _resolve_version_str():
