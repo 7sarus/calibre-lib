@@ -30,7 +30,7 @@ from qt.core import (
 # Plugin Version definitions
 PLUGIN_VERSION = (1, 11, 0, "b")
 _BASE_VERSION_STR = "v1.11b"
-_BUILD_COMMIT = "66"
+_BUILD_COMMIT = "68"
 
 
 def _resolve_version_str():
@@ -63,14 +63,9 @@ PERMANENT_MIRRORS = (
 )
 DEFAULT_FALLBACK_MIRRORS = (
     "https://libgen.me",
-    "https://libgen.rs",
-    "https://libgen.is",
-    "https://libgen.st",
     "https://libgen.vg",
     "https://libgen.gl",
     "https://libgen.bz",
-    "https://libgen.gs",
-    "https://libgen.lc",
     "https://libgen.la",
 )
 _VALID_MIRROR_RE = re.compile(r"^https?://(?:www\.)?libgen\.[a-z]{2,}(?::\d+)?/?$", re.IGNORECASE)
@@ -100,6 +95,7 @@ prefs.defaults["filter_mode"] = "Prioritize"
 prefs.defaults["last_search_query"] = ""
 prefs.defaults["last_successful_mirror"] = ""
 prefs.defaults["mirror_success_counts"] = {}
+prefs.defaults["mirror_latencies"] = {}
 prefs.defaults["max_results"] = 5
 prefs.defaults["search_timeout"] = 8
 prefs.defaults["show_download_stats"] = True
@@ -151,7 +147,7 @@ CATEGORIES = {
 }
 
 def get_mirrors():
-    """Returns an ordered list of unique mirrors. Prioritizes last_successful_mirror at the top."""
+    """Returns an ordered list of unique mirrors, defaulting to lowest latency first."""
     primary = normalize_mirror_url(prefs.get("primary_mirror", "https://libgen.li")) or "https://libgen.li"
     fallback_str = prefs.get("fallback_mirrors", "")
     fallbacks = [normalize_mirror_url(m) for m in fallback_str.split(",")]
@@ -164,15 +160,51 @@ def get_mirrors():
     if cleaned_custom != prefs.get("custom_mirrors", []):
         prefs["custom_mirrors"] = cleaned_custom
 
-    mirrors = []
-    last_succ = normalize_mirror_url(prefs.get("last_successful_mirror", ""))
-    if last_succ:
-        mirrors.append(last_succ)
-
+    pool = []
     for m in [primary] + list(PERMANENT_MIRRORS) + cleaned_fallbacks + cleaned_custom:
-        if m and m not in mirrors:
-            mirrors.append(m)
-    return mirrors
+        if m and m not in pool:
+            pool.append(m)
+
+    latencies = prefs.get("mirror_latencies", {})
+    if not isinstance(latencies, dict):
+        latencies = {}
+
+    def latency_key(url):
+        # Lowest positive ms first. Untested mirrors (None / <=0) follow tested ones.
+        ms = latencies.get(url)
+        if ms is not None and isinstance(ms, (int, float)) and ms > 0:
+            return (0, ms)
+        return (1, 999999)
+
+    pool.sort(key=latency_key)
+    return pool
+
+def record_mirror_latency(mirror_url, latency_ms):
+    """Records mirror ping latency in milliseconds, promoting lowest latency mirror to primary."""
+    if not mirror_url or latency_ms is None:
+        return
+    clean = normalize_mirror_url(mirror_url)
+    if not clean:
+        return
+    try:
+        ms = int(latency_ms)
+    except (ValueError, TypeError):
+        return
+    with _prefs_lock:
+        lats = prefs.get("mirror_latencies", {})
+        if not isinstance(lats, dict):
+            lats = {}
+        if ms > 0:
+            lats[clean] = ms
+        else:
+            lats.pop(clean, None)
+        prefs["mirror_latencies"] = lats
+        # Best latency becomes primary if valid
+        valid_tested = {k: v for k, v in lats.items() if isinstance(v, (int, float)) and v > 0}
+        if valid_tested:
+            best_mirror = min(valid_tested, key=valid_tested.get)
+            if best_mirror in get_mirrors():
+                prefs["primary_mirror"] = best_mirror
 
 def record_successful_mirror(mirror_url):
     """Persists mirror success and promotes the most successful mirror to primary."""
@@ -238,6 +270,14 @@ def discard_mirrors(urls_to_discard):
         prefs["mirror_success_counts"] = {
             normalize_mirror_url(m): c
             for m, c in counts.items()
+            if normalize_mirror_url(m) and normalize_mirror_url(m) not in discard_set
+        }
+
+    lats = prefs.get("mirror_latencies", {})
+    if isinstance(lats, dict):
+        prefs["mirror_latencies"] = {
+            normalize_mirror_url(m): ms
+            for m, ms in lats.items()
             if normalize_mirror_url(m) and normalize_mirror_url(m) not in discard_set
         }
 

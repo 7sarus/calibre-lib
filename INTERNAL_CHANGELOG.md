@@ -8,6 +8,13 @@ updated: 2026-09-15
 
 ## 2026-09-15
 
+- id: mirror-latency-cycling
+  type: feat
+  files: [config.py, dialog.py, scraper.py, calibre_dialog.ui, test_search_logic.py]
+  summary: Replaced 'Auto (Failover)' with 'Auto (Best Latency)'. Mirrors sorted by lowest latency first. Ping testing persists latency into prefs. Purged dead mirror domains.
+  why: User requested removing failover concept in favor of defaulting to mirror with best latency and cycling sequentially if one fails.
+  validation: 9/9 offline unit tests passing
+
 - id: ui-hardcover-compact
   type: fix
   files: [dialog.py]

@@ -760,7 +760,7 @@
              <bool>true</bool>
             </property>
             <property name="placeholderText">
-             <string>Live download events, mirror failovers, and streaming chunks will appear here...</string>
+             <string>Live download events, mirror cycles, and streaming chunks will appear here...</string>
             </property>
            </widget>
           </item>

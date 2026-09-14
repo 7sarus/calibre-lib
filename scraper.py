@@ -73,8 +73,15 @@ class LibgenScraper:
         "https://libgen.gl",
         "https://libgen.bz",
         "https://libgen.la",
-        "https://libgen.is",
     ]
+
+    DEFAULT_FALLBACK_MIRRORS = (
+        "https://libgen.me",
+        "https://libgen.vg",
+        "https://libgen.gl",
+        "https://libgen.bz",
+        "https://libgen.la",
+    )
 
     USER_AGENT = (
         "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0"

@@ -92,6 +92,7 @@ try:
         CATEGORIES,
         get_mirrors,
         set_mirror_order,
+        record_mirror_latency,
         add_custom_mirror,
         remove_custom_mirror,
         discard_mirrors,
@@ -121,6 +122,7 @@ except (ImportError, ModuleNotFoundError):
         CATEGORIES,
         get_mirrors,
         set_mirror_order,
+        record_mirror_latency,
         add_custom_mirror,
         remove_custom_mirror,
         discard_mirrors,
@@ -1873,7 +1875,7 @@ class LibgenDialog(QDialog):
         log_h = min(320, max(70, int(prefs.get("log_panel_height", 120))))
         self.log_view.setFixedHeight(log_h)
         self.log_view.setStyleSheet(MONO_PANEL_STYLE)
-        self.log_view.setPlaceholderText("Live download events, mirror failovers, and streaming chunks will appear here...")
+        self.log_view.setPlaceholderText("Live download events, mirror cycles, and streaming chunks will appear here...")
         self.log_view.setVisible(False)
         queue_layout.addWidget(self.log_view)
 
@@ -2206,14 +2208,17 @@ class LibgenDialog(QDialog):
             QMessageBox.warning(self, "Fetch Failed", "Could not fetch live mirrors or none were found active.")
     def update_mirror_combobox(self):
         self.mirror_combo.clear()
-        self.mirror_combo.addItem("Auto (Failover)")
+        self.mirror_combo.addItem("Auto (Best Latency)")
         for m in get_mirrors():
             self.mirror_combo.addItem(m)
 
         cur_selected = prefs.get("selected_mirror", "Auto")
-        idx = self.mirror_combo.findText(cur_selected)
-        if idx >= 0:
-            self.mirror_combo.setCurrentIndex(idx)
+        if cur_selected == "Auto" or str(cur_selected).startswith("Auto"):
+            self.mirror_combo.setCurrentIndex(0)
+        else:
+            idx = self.mirror_combo.findText(cur_selected)
+            if idx >= 0:
+                self.mirror_combo.setCurrentIndex(idx)
 
     def update_neko_animation(self):
         is_active = False
@@ -3036,9 +3041,11 @@ class LibgenDialog(QDialog):
                 latency_item = QTableWidgetItem(f"{ms} ms" if is_ok else "-")
                 speed_item = QTableWidgetItem(speed_str if is_ok else "-")
             else:
-                status_item = QTableWidgetItem("Untested")
+                saved_latencies = prefs.get("mirror_latencies", {})
+                saved_ms = saved_latencies.get(m) if isinstance(saved_latencies, dict) else None
+                status_item = QTableWidgetItem("Ready" if saved_ms else "Untested")
                 status_item.setForeground(QColor("gray"))
-                latency_item = QTableWidgetItem("-")
+                latency_item = QTableWidgetItem(f"{saved_ms} ms" if saved_ms else "-")
                 speed_item = QTableWidgetItem("-")
 
             self.mirrors_table.setItem(row, 1, status_item)
@@ -3090,6 +3097,8 @@ class LibgenDialog(QDialog):
 
     def on_mirror_tested(self, url, is_ok, ms, kb_s, speed_str, msg):
         self.mirror_health[url] = (is_ok, ms, kb_s, speed_str, msg)
+        if is_ok and ms > 0:
+            record_mirror_latency(url, ms)
         self.populate_mirrors_table()
         
         host = urlparse(url).netloc or url
@@ -3099,7 +3108,9 @@ class LibgenDialog(QDialog):
 
     def on_all_mirrors_tested(self):
         self.test_all_mirrors_btn.setEnabled(True)
-        self.status_label.setText("Mirror speed and latency testing completed.")
+        self.update_mirror_combobox()
+        self.populate_mirrors_table()
+        self.status_label.setText("Mirror speed and latency testing completed. Mirrors sorted by latency.")
 
     def sort_mirrors_by_speed(self):
         """Sorts mirrors by highest bandwidth and lowest latency."""
@@ -3237,7 +3248,7 @@ class LibgenDialog(QDialog):
             if fmt_idx >= 0:
                 self.format_combo.setCurrentIndex(fmt_idx)
 
-            m_idx = self.mirror_combo.findText("Auto (Failover)")
+            m_idx = self.mirror_combo.findText("Auto (Best Latency)")
             if m_idx >= 0:
                 self.mirror_combo.setCurrentIndex(m_idx)
 
@@ -3308,7 +3319,7 @@ class LibgenDialog(QDialog):
         self.session_completed = 0
         self.status_label.setText(f"0/{self.session_total} downloaded (Retrying {self.session_total} failed)")
 
-        self.append_log(f"🔄 Retrying {len(failed_indices)} failed book(s) with multi-mirror failover...")
+        self.append_log(f"🔄 Retrying {len(failed_indices)} failed book(s), cycling mirrors by best latency...")
         self.start_bulk_download(target_indices=failed_indices)
 
     # --- Bulk Download Handlers ---
