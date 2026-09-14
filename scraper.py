@@ -101,6 +101,17 @@ class LibgenScraper:
         delay = min(2 ** fails, 60)
         self._mirror_cooldowns[mirror] = (fails, time.monotonic() + delay)
 
+    @contextmanager
+    def _open_url(self, browser, url_or_req, timeout=None):
+        resp = browser.open(url_or_req, timeout=timeout) if timeout else browser.open(url_or_req)
+        try:
+            yield resp
+        finally:
+            try:
+                resp.close()
+            except Exception:
+                pass
+
     def _get_browser(self):
         """Returns a thread-local cached browser instance for connection reuse."""
         import ssl
