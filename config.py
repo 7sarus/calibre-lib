@@ -30,7 +30,7 @@ from qt.core import (
 # Plugin Version definitions
 PLUGIN_VERSION = (1, 11, 0, "b")
 _BASE_VERSION_STR = "v1.11b"
-_BUILD_COMMIT = "63"
+_BUILD_COMMIT = "64"
 
 
 def _resolve_version_str():
@@ -86,6 +86,7 @@ prefs.defaults["pending_searches"] = []
 prefs.defaults["hardcover_token"] = ""
 prefs.defaults["hardcover_match_mode"] = "ISBN Only"
 prefs.defaults["hardcover_max_queue_limit"] = 10
+prefs.defaults["hardcover_skip_in_library"] = True
 prefs.defaults["dialog_width"] = 1000
 prefs.defaults["dialog_height"] = 620
 

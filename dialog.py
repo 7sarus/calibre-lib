@@ -822,6 +822,13 @@ class HardcoverShelfDialog(QDialog):
         self.isbn_mode_radio.toggled.connect(self.on_mode_changed)
         match_layout.addWidget(self.isbn_mode_radio)
         match_layout.addWidget(self.text_mode_radio)
+
+        self.skip_library_checkbox = QCheckBox("Skip books already in Calibre library", self)
+        self.skip_library_checkbox.setToolTip("Checks your Calibre database for matching ISBN or title to avoid duplicate searches")
+        self.skip_library_checkbox.setChecked(bool(prefs.get("hardcover_skip_in_library", True)))
+        self.skip_library_checkbox.stateChanged.connect(lambda v: prefs.__setitem__("hardcover_skip_in_library", bool(v)))
+        match_layout.addWidget(self.skip_library_checkbox)
+
         top_layout.addWidget(match_group)
 
         self.layout.addWidget(top_group)
@@ -865,8 +872,9 @@ class HardcoverShelfDialog(QDialog):
         self.max_queue_spin.valueChanged.connect(lambda v: prefs.__setitem__("hardcover_max_queue_limit", v))
         btn_row.addWidget(self.max_queue_spin)
 
-        self.queue_btn = QPushButton("Add Selected to Download Queue", self)
-        self.queue_btn.setStyleSheet("font-weight: bold; background-color: #2b5b84; color: white; padding: 6px 14px;")
+        self.queue_btn = QPushButton("▶ Add Selected to Search Queue", self)
+        self.queue_btn.setStyleSheet("font-weight: bold; background-color: #238636; color: white; padding: 6px 14px;")
+        self.queue_btn.setToolTip("Add selected books to the main window's serialized Search Queue")
         self.queue_btn.clicked.connect(self.on_queue_selected)
         btn_row.addWidget(self.queue_btn)
 
@@ -975,6 +983,29 @@ class HardcoverShelfDialog(QDialog):
         for r in range(limit):
             self.books_table.selectRow(r)
 
+    def _is_in_library(self, isbn="", title=""):
+        try:
+            gui = getattr(self.parent_dialog, "gui", None)
+            if not gui or not getattr(gui, "current_db", None):
+                return False
+            db = gui.current_db
+            new_api = getattr(db, "new_api", None)
+            if isbn and new_api:
+                clean_isbn = isbn.replace("-", "").strip()
+                if clean_isbn and new_api.search(f"isbn:{clean_isbn}"):
+                    return True
+            elif isbn and hasattr(db, "data"):
+                clean_isbn = isbn.replace("-", "").strip()
+                if clean_isbn and db.data.search(f"isbn:{clean_isbn}"):
+                    return True
+            if title and new_api:
+                clean_t = title.replace('"', '').strip()
+                if clean_t and new_api.search(f'title:"={clean_t}"'):
+                    return True
+        except Exception:
+            pass
+        return False
+
     def on_queue_selected(self):
         selected_rows = sorted(set(idx.row() for idx in self.books_table.selectedIndexes()))
         if not selected_rows:
@@ -986,15 +1017,11 @@ class HardcoverShelfDialog(QDialog):
             selected_rows = selected_rows[:max_limit]
 
         is_isbn_mode = self.isbn_mode_radio.isChecked()
-        scraper = LibgenScraper(mirrors=get_mirrors(), timeout=int(prefs.get("timeout", 20)))
+        skip_library = self.skip_library_checkbox.isChecked()
 
-        added_cnt = 0
-        failed_cnt = 0
+        added_books = []
         skipped_no_isbn = 0
-
-        self.queue_btn.setEnabled(False)
-        self.queue_btn.setText("Searching & Queuing...")
-        QApplication.processEvents()
+        skipped_in_lib = 0
 
         for r in selected_rows:
             if r >= len(self.fetched_books):
@@ -1004,61 +1031,65 @@ class HardcoverShelfDialog(QDialog):
             author = b.get("author", "")
             isbn = b.get("best_isbn") or b.get("isbn_13") or b.get("isbn_10") or ""
 
-            if is_isbn_mode:
-                if not isbn:
-                    skipped_no_isbn += 1
-                    self.books_table.setItem(r, 4, QTableWidgetItem("Skipped (No ISBN)"))
-                    continue
-                query = isbn
-                search_field = "i"
-            else:
-                query = f"{title} {author}".strip()
-                search_field = ""
+            if is_isbn_mode and not isbn:
+                skipped_no_isbn += 1
+                self.books_table.setItem(r, 4, QTableWidgetItem("Skipped (No ISBN)"))
+                continue
 
-            self.books_table.setItem(r, 4, QTableWidgetItem("Searching..."))
-            QApplication.processEvents()
+            if skip_library and self._is_in_library(isbn, title):
+                skipped_in_lib += 1
+                self.books_table.setItem(r, 4, QTableWidgetItem("Skipped (In Library)"))
+                continue
 
-            try:
-                results = scraper.search(query=query, search_field=search_field, max_results=2)
-            except Exception:
-                results = []
+            rec = {
+                "title": title,
+                "author": author,
+                "isbn": isbn if is_isbn_mode else (isbn or ""),
+                "isbn_only": is_isbn_mode,
+                "year": b.get("release_year") or "",
+            }
+            added_books.append(rec)
+            self.books_table.setItem(r, 4, QTableWidgetItem("✓ In Search Queue"))
 
-            if results:
-                top_match = results[0]
-                if self.parent_dialog and hasattr(self.parent_dialog, "queue_items"):
-                    existing = any(
-                        q.get("book") and getattr(q["book"], "detail_url", None) == top_match.detail_url
-                        for q in self.parent_dialog.queue_items
-                    )
-                    if not existing:
-                        self.parent_dialog.queue_items.append({
-                            "book": top_match,
-                            "status": "Queued",
-                        })
-                        added_cnt += 1
-                self.books_table.setItem(r, 4, QTableWidgetItem("✓ Queued"))
-            else:
-                failed_cnt += 1
-                add_pending_search(query)
-                self.books_table.setItem(r, 4, QTableWidgetItem("Not Found (Added to Pending)"))
-                if self.parent_dialog and hasattr(self.parent_dialog, "update_pending_combo"):
-                    self.parent_dialog.update_pending_combo()
+        if not added_books:
+            msg = "No books were added to Search Queue."
+            if skipped_in_lib:
+                msg += f"\n• {skipped_in_lib} book(s) already in Calibre library."
+            if skipped_no_isbn:
+                msg += f"\n• {skipped_no_isbn} book(s) lacked an ISBN."
+            QMessageBox.information(self, "No Books Queued", msg)
+            return
 
-        self.queue_btn.setText("Add Selected to Download Queue")
-        self.queue_btn.setEnabled(True)
+        if self.parent_dialog:
+            if not hasattr(self.parent_dialog, "selected_books") or self.parent_dialog.selected_books is None:
+                self.parent_dialog.selected_books = []
 
-        if self.parent_dialog and hasattr(self.parent_dialog, "update_queue_table"):
-            self.parent_dialog.update_queue_table()
-            if hasattr(self.parent_dialog, "set_current_tab_widget"):
-                self.parent_dialog.set_current_tab_widget(getattr(self.parent_dialog, "tab_queue", None))
-            elif hasattr(self.parent_dialog, "tabs"):
-                self.parent_dialog.tabs.setCurrentIndex(1)
+            existing_sigs = {
+                (b.get("isbn", "").strip(), b.get("title", "").strip().lower())
+                for b in self.parent_dialog.selected_books
+            }
+            new_count = 0
+            for rec in added_books:
+                sig = (rec.get("isbn", "").strip(), rec.get("title", "").strip().lower())
+                if sig not in existing_sigs:
+                    self.parent_dialog.selected_books.append(rec)
+                    existing_sigs.add(sig)
+                    new_count += 1
 
-        summary_msg = f"Hardcover Shelf Import Complete:\n\n• Successfully queued: {added_cnt} book(s)\n• Zero results (added to Pending Searches): {failed_cnt} book(s)"
-        if skipped_no_isbn > 0:
-            summary_msg += f"\n• Skipped (no ISBN present in Hardcover record): {skipped_no_isbn} book(s)"
+            if hasattr(self.parent_dialog, "update_search_queue_bar"):
+                self.parent_dialog.update_search_queue_bar()
 
-        QMessageBox.information(self, "Hardcover Queue Import", summary_msg)
+            self.parent_dialog.status_label.setText(
+                f"Loaded {len(self.parent_dialog.selected_books)} record(s) into Search Queue ({new_count} new from Hardcover)."
+            )
+
+        summary_msg = f"✓ Added {len(added_books)} book(s) to the Search Queue."
+        if skipped_in_lib:
+            summary_msg += f"\n• Skipped {skipped_in_lib} book(s) already in Calibre library."
+        if skipped_no_isbn:
+            summary_msg += f"\n• Skipped {skipped_no_isbn} book(s) with no ISBN."
+
+        QMessageBox.information(self, "Hardcover Search Queue", summary_msg)
         self.accept()
 
 
@@ -1469,7 +1500,7 @@ class LibgenDialog(QDialog):
         self.dismiss_queue_bar_btn = QPushButton("✕", self)
         self.dismiss_queue_bar_btn.setToolTip("Dismiss Calibre records search queue")
         self.dismiss_queue_bar_btn.setFixedWidth(24)
-        self.dismiss_queue_bar_btn.clicked.connect(lambda: self.search_queue_bar.setVisible(False))
+        self.dismiss_queue_bar_btn.clicked.connect(self.dismiss_search_queue_bar)
         queue_bar_layout.addWidget(self.dismiss_queue_bar_btn)
 
         if not self.selected_books:
@@ -2269,7 +2300,26 @@ class LibgenDialog(QDialog):
 
         QMessageBox.warning(self, "Search Error", f"Failed to search LibGen mirrors:\n{err_msg}")
 
-    # --- Calibre Selection Search Queue Handlers ---
+    # --- Calibre Selection & Hardcover Search Queue Handlers ---
+    def update_search_queue_bar(self):
+        if not hasattr(self, "search_queue_bar"):
+            return
+        n_books = len(self.selected_books) if hasattr(self, "selected_books") and self.selected_books else 0
+        if n_books > 0:
+            self.queue_info_label.setText(f"📚 <b>{n_books} record(s)</b> loaded into Search Queue")
+            self.start_queue_search_btn.setText(f"▶ Search All ({n_books}) Records (Max 2/book)")
+            self.start_queue_search_btn.setEnabled(True)
+            self.start_queue_search_btn.setVisible(True)
+            self.stop_queue_search_btn.setVisible(False)
+            self.search_queue_bar.setVisible(True)
+        else:
+            self.search_queue_bar.setVisible(False)
+
+    def dismiss_search_queue_bar(self):
+        self.selected_books = []
+        if hasattr(self, "search_queue_bar"):
+            self.search_queue_bar.setVisible(False)
+
     def start_search_queue(self):
         if not self.selected_books:
             return
