@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 from qt.core import (
     Qt,
+    QApplication,
     QDialog,
     QVBoxLayout,
     QHBoxLayout,
