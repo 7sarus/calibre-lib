@@ -8,6 +8,13 @@ updated: 2026-09-15
 
 ## 2026-09-15
 
+- id: fix-collections-import-dialog
+  type: fix
+  files: [dialog.py, config.py]
+  summary: Imported collections module in dialog.py to resolve NameError when initializing pending_queue deque.
+  why: Uncaught NameError: name 'collections' is not defined crashed bulk search.
+  validation: python3 -m py_compile dialog.py passed; 9/9 unit tests pass
+
 - id: bulk-search-single-result-isbn
   type: perf
   files: [dialog.py, scraper.py, config.py]

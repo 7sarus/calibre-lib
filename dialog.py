@@ -10,6 +10,7 @@ import os
 import re
 import time
 import threading
+import collections
 from collections import OrderedDict
 import concurrent.futures
 from urllib.parse import urlparse
