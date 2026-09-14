@@ -8,6 +8,13 @@ updated: 2026-09-15
 
 ## 2026-09-15
 
+- id: ui-hardcover-token-size
+  type: fix
+  files: [dialog.py, config.py]
+  summary: Reduced Hardcover dialog token field to 220px, compacted match row horizontally with stretch, lowered dialog default bounds to 640x460 (max clamped 880x680).
+  why: User reported Hardcover child window and token field were too wide.
+  validation: verified layout clamps and 9/9 tests pass
+
 - id: mirror-latency-cycling
   type: feat
   files: [config.py, dialog.py, scraper.py, calibre_dialog.ui, test_search_logic.py]

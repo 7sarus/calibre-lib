@@ -30,7 +30,7 @@ from qt.core import (
 # Plugin Version definitions
 PLUGIN_VERSION = (1, 11, 0, "b")
 _BASE_VERSION_STR = "v1.11b"
-_BUILD_COMMIT = "68"
+_BUILD_COMMIT = "69"
 
 
 def _resolve_version_str():
@@ -115,17 +115,17 @@ prefs.defaults["hardcover_max_queue_limit"] = 10
 prefs.defaults["hardcover_skip_in_library"] = True
 prefs.defaults["hardcover_shelves_cache"] = {}
 prefs.defaults["hardcover_books_cache"] = {}
-prefs.defaults["hardcover_dialog_width"] = 780
-prefs.defaults["hardcover_dialog_height"] = 520
+prefs.defaults["hardcover_dialog_width"] = 640
+prefs.defaults["hardcover_dialog_height"] = 460
 prefs.defaults["hardcover_books_table_header"] = ""
-prefs.defaults["review_dialog_width"] = 760
+prefs.defaults["review_dialog_width"] = 720
 prefs.defaults["review_dialog_height"] = 420
 prefs.defaults["review_table_header"] = ""
 prefs.defaults["cover_panel_width"] = 200
 prefs.defaults["cover_panel_height"] = 300
 prefs.defaults["log_panel_height"] = 120
-prefs.defaults["dialog_width"] = 1000
-prefs.defaults["dialog_height"] = 620
+prefs.defaults["dialog_width"] = 920
+prefs.defaults["dialog_height"] = 600
 
 SEARCH_FIELDS = {
     "All Fields": "",

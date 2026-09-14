@@ -843,10 +843,11 @@ class HardcoverShelfDialog(QDialog):
         super().__init__(parent)
         self.parent_dialog = parent
         self.setWindowTitle("Hardcover Shelf & List Downloader")
-        saved_w = min(1200, max(560, int(prefs.get("hardcover_dialog_width", 780))))
-        saved_h = min(900, max(420, int(prefs.get("hardcover_dialog_height", 520))))
+        saved_w = min(880, max(480, int(prefs.get("hardcover_dialog_width", 640))))
+        saved_h = min(680, max(380, int(prefs.get("hardcover_dialog_height", 460))))
         self.resize(saved_w, saved_h)
         self.layout = QVBoxLayout(self)
+        self.layout.setSpacing(6)
 
         self.fetched_books = []
         self.shelves_data = []
@@ -855,6 +856,7 @@ class HardcoverShelfDialog(QDialog):
         # Top section: Token & Shelves
         top_group = QGroupBox("Hardcover Authentication & Shelf Selection")
         top_layout = QVBoxLayout(top_group)
+        top_layout.setSpacing(6)
 
         token_row = QHBoxLayout()
         token_row.addWidget(QLabel("Token:"))
@@ -862,13 +864,14 @@ class HardcoverShelfDialog(QDialog):
         self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.token_edit.setText(prefs.get("hardcover_token", ""))
         self.token_edit.setPlaceholderText("Hardcover API token")
-        self.token_edit.setMaximumWidth(360)
-        token_row.addWidget(self.token_edit, stretch=1)
+        self.token_edit.setMaximumWidth(220)
+        token_row.addWidget(self.token_edit)
 
         self.fetch_shelves_btn = QPushButton("Refresh Shelves", self)
         self.fetch_shelves_btn.setStyleSheet("font-weight: bold;")
         self.fetch_shelves_btn.clicked.connect(lambda: self.on_fetch_shelves(force_refresh=True))
         token_row.addWidget(self.fetch_shelves_btn)
+        token_row.addStretch(1)
         top_layout.addLayout(token_row)
 
         shelf_row = QHBoxLayout()
@@ -876,7 +879,7 @@ class HardcoverShelfDialog(QDialog):
         self.shelf_combo = QComboBox(self)
         self.shelf_combo.addItem("Use Refresh Shelves to load...")
         self.shelf_combo.currentIndexChanged.connect(self.on_shelf_selected)
-        self.shelf_combo.setMinimumWidth(220)
+        self.shelf_combo.setMinimumWidth(180)
         shelf_row.addWidget(self.shelf_combo, stretch=1)
 
         self.load_books_btn = QPushButton("Refresh Books", self)
@@ -886,7 +889,8 @@ class HardcoverShelfDialog(QDialog):
 
         # Matching mode
         match_group = QGroupBox("Queue Matching")
-        match_layout = QVBoxLayout(match_group)
+        match_layout = QHBoxLayout(match_group)
+        match_layout.setSpacing(10)
         self.mode_btn_group = QButtonGroup(self)
 
         self.isbn_mode_radio = QRadioButton("ISBN only")
@@ -903,17 +907,15 @@ class HardcoverShelfDialog(QDialog):
             self.text_mode_radio.setChecked(True)
 
         self.isbn_mode_radio.toggled.connect(self.on_mode_changed)
-        mode_row = QHBoxLayout()
-        mode_row.addWidget(self.isbn_mode_radio)
-        mode_row.addWidget(self.text_mode_radio)
-        mode_row.addStretch(1)
-        match_layout.addLayout(mode_row)
+        match_layout.addWidget(self.isbn_mode_radio)
+        match_layout.addWidget(self.text_mode_radio)
 
         self.skip_library_checkbox = QCheckBox("Skip in-library books", self)
         self.skip_library_checkbox.setToolTip("Checks your Calibre database for matching ISBN or title to avoid duplicate searches")
         self.skip_library_checkbox.setChecked(bool(prefs.get("hardcover_skip_in_library", True)))
         self.skip_library_checkbox.stateChanged.connect(lambda v: prefs.__setitem__("hardcover_skip_in_library", bool(v)))
         match_layout.addWidget(self.skip_library_checkbox)
+        match_layout.addStretch(1)
 
         top_layout.addWidget(match_group)
 
