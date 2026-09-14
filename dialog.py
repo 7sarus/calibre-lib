@@ -882,7 +882,10 @@ class HardcoverShelfDialog(QDialog):
 
         if self.parent_dialog and hasattr(self.parent_dialog, "update_queue_table"):
             self.parent_dialog.update_queue_table()
-            self.parent_dialog.tabs.setCurrentIndex(1)
+            if hasattr(self.parent_dialog, "set_current_tab_widget"):
+                self.parent_dialog.set_current_tab_widget(getattr(self.parent_dialog, "tab_queue", None))
+            elif hasattr(self.parent_dialog, "tabs"):
+                self.parent_dialog.tabs.setCurrentIndex(1)
 
         summary_msg = f"Hardcover Shelf Import Complete:\n\n• Successfully queued: {added_cnt} book(s)\n• Zero results (added to Pending Searches): {failed_cnt} book(s)"
         if skipped_no_isbn > 0:
@@ -1224,11 +1227,13 @@ class LibgenDialog(QDialog):
 
         # Tabs: Search Results, Queue, and Mirrors/Health
         self.tabs = QTabWidget(self)
+        self.tabs.setMovable(True)
         self.tabs.currentChanged.connect(self.on_table_selection_changed)
 
         # --- Tab 1: Search Results ---
-        tab_results = QWidget()
-        results_layout = QVBoxLayout(tab_results)
+        self.tab_results = QWidget()
+        self.tab_results.setObjectName("tab_results")
+        results_layout = QVBoxLayout(self.tab_results)
 
         # Inline Search Progress & Active Mirror Display
         search_status_box = QHBoxLayout()
@@ -1285,22 +1290,23 @@ class LibgenDialog(QDialog):
         btn_bar.addWidget(self.download_now_btn)
 
         results_layout.addLayout(btn_bar)
-        self.tabs.addTab(tab_results, "Search Results (0)")
+        self.tabs.addTab(self.tab_results, "Search Results (0)")
 
         # --- Tab 2: Download Queue ---
-        tab_queue = QWidget()
-        queue_layout = QVBoxLayout(tab_queue)
+        self.tab_queue = QWidget()
+        self.tab_queue.setObjectName("tab_queue")
+        queue_layout = QVBoxLayout(self.tab_queue)
 
-        # Queue Segmentation: All, Queued, Downloading, Failed
+        # Queue Segmentation: Queued, Downloading, Downloaded, Failed
         filter_bar = QHBoxLayout()
         filter_bar.addWidget(QLabel("View:"))
-        self.queue_filter_mode = "All"
+        self.queue_filter_mode = "Queued"
         self.queue_filter_btns = {}
 
-        for mode in ("All", "Queued", "Downloading", "Downloaded", "Failed"):
+        for mode in ("Queued", "Downloading", "Downloaded", "Failed"):
             btn = QPushButton(f"{mode} (0)", self)
             btn.setCheckable(True)
-            if mode == "All":
+            if mode == "Queued":
                 btn.setChecked(True)
                 btn.setStyleSheet("font-weight: bold; background-color: #2b5b84; color: white; padding: 3px 10px;")
             else:
@@ -1384,12 +1390,13 @@ class LibgenDialog(QDialog):
         queue_btn_bar.addWidget(self.start_download_btn)
 
         queue_layout.addLayout(queue_btn_bar)
-        self.tabs.addTab(tab_queue, "Queue (0)")
+        self.tabs.addTab(self.tab_queue, "Queue (0)")
 
 
         # --- Tab 3: Mirrors & Health ---
-        tab_mirrors = QWidget()
-        mirrors_layout = QVBoxLayout(tab_mirrors)
+        self.tab_mirrors = QWidget()
+        self.tab_mirrors.setObjectName("tab_mirrors")
+        mirrors_layout = QVBoxLayout(self.tab_mirrors)
 
         # Mirrors Table
         self.mirrors_table = QTableWidget(self)
@@ -1443,7 +1450,7 @@ class LibgenDialog(QDialog):
         add_layout.addWidget(self.add_mirror_btn)
 
         mirrors_layout.addWidget(add_group)
-        self.tabs.addTab(tab_mirrors, "Mirrors & Health")
+        self.tabs.addTab(self.tab_mirrors, "Mirrors & Health")
 
         main_layout.addWidget(self.tabs)
 
@@ -1518,6 +1525,18 @@ class LibgenDialog(QDialog):
         dlg = HardcoverShelfDialog(self)
         dlg.exec()
 
+    def set_tab_text_for_widget(self, widget, text):
+        if hasattr(self, "tabs") and widget is not None:
+            idx = self.tabs.indexOf(widget)
+            if idx >= 0:
+                self.tabs.setTabText(idx, text)
+
+    def set_current_tab_widget(self, widget):
+        if hasattr(self, "tabs") and widget is not None:
+            idx = self.tabs.indexOf(widget)
+            if idx >= 0:
+                self.tabs.setCurrentIndex(idx)
+
     def save_header_states(self):
         try:
             if hasattr(self, "results_table"):
@@ -1526,6 +1545,15 @@ class LibgenDialog(QDialog):
                 prefs["queue_table_header"] = bytes(self.queue_table.horizontalHeader().saveState().toHex()).decode("ascii")
             if hasattr(self, "mirrors_table"):
                 prefs["mirrors_table_header"] = bytes(self.mirrors_table.horizontalHeader().saveState().toHex()).decode("ascii")
+            if hasattr(self, "tabs"):
+                order = []
+                for i in range(self.tabs.count()):
+                    w = self.tabs.widget(i)
+                    name = w.objectName() if w else ""
+                    if name:
+                        order.append(name)
+                if order:
+                    prefs["tabs_order"] = order
         except Exception as e:
             print(f"[LibGen Plugin] Failed to save header states: {e}")
 
@@ -1539,6 +1567,22 @@ class LibgenDialog(QDialog):
                 if table and prefs.get(key):
                     state_hex = prefs.get(key)
                     table.horizontalHeader().restoreState(QByteArray.fromHex(state_hex.encode("ascii")))
+
+            if hasattr(self, "tabs") and prefs.get("tabs_order"):
+                saved_order = prefs.get("tabs_order")
+                named_widgets = {
+                    "tab_results": getattr(self, "tab_results", None),
+                    "tab_queue": getattr(self, "tab_queue", None),
+                    "tab_mirrors": getattr(self, "tab_mirrors", None),
+                }
+                for target_pos, name in enumerate(saved_order):
+                    widget = named_widgets.get(name)
+                    if widget:
+                        current_pos = self.tabs.indexOf(widget)
+                        if current_pos >= 0 and current_pos != target_pos:
+                            tab_bar = self.tabs.tabBar()
+                            if tab_bar:
+                                tab_bar.moveTab(current_pos, target_pos)
         except Exception as e:
             print(f"[LibGen Plugin] Failed to restore header states: {e}")
 
@@ -1853,7 +1897,7 @@ class LibgenDialog(QDialog):
 
         if target_count > 0:
             msg = f"Querying mirrors [{idx}/{total}] • 📦 {found_count}/{target_count} artifacts found ({host})"
-            self.tabs.setTabText(0, f"Search Results ({found_count})")
+            self.set_tab_text_for_widget(getattr(self, "tab_results", None), f"Search Results ({found_count})")
         else:
             msg = f"Querying mirror [{idx}/{total}]: {host} ({mirror})"
 
@@ -1871,8 +1915,8 @@ class LibgenDialog(QDialog):
         success_text = f"✓ Found {len(books)} artifacts via {host}." if mirror_used else f"✓ Found {len(books)} artifacts."
         self.status_label.setText(success_text)
         self.search_mirror_label.setText(success_text)
-        self.tabs.setTabText(0, f"Search Results ({len(books)})")
-        self.tabs.setCurrentIndex(0)
+        self.set_tab_text_for_widget(getattr(self, "tab_results", None), f"Search Results ({len(books)})")
+        self.set_current_tab_widget(getattr(self, "tab_results", None))
         self.populate_results_table()
 
         query = self.search_input.text().strip()
@@ -1969,7 +2013,7 @@ class LibgenDialog(QDialog):
         if queued_urls:
             self.search_results = [b for b in self.search_results if b.detail_url not in queued_urls]
             self.populate_results_table()
-            self.tabs.setTabText(0, f"Search Results ({len(self.search_results)})")
+            self.set_tab_text_for_widget(getattr(self, "tab_results", None), f"Search Results ({len(self.search_results)})")
 
         self.update_queue_table()
         if added_count > 0:
@@ -2069,9 +2113,9 @@ class LibgenDialog(QDialog):
         )
         total = len(self.queue_items)
         if 0 < remaining < total:
-            self.tabs.setTabText(1, f"Queue ({remaining} left)")
+            self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)")
         else:
-            self.tabs.setTabText(1, f"Queue ({total})")
+            self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({total})")
         self.apply_queue_filter()
         self.save_queue()
 
@@ -2094,7 +2138,6 @@ class LibgenDialog(QDialog):
         dl_cnt = 0
         downloaded_cnt = 0
         failed_cnt = 0
-        total_cnt = len(self.queue_items)
 
         for row, q in enumerate(self.queue_items):
             status = str(q.get("status", "")).lower()
@@ -2121,9 +2164,7 @@ class LibgenDialog(QDialog):
             elif is_failed:
                 failed_cnt += 1
 
-            if getattr(self, "queue_filter_mode", "All") == "All":
-                hide = False
-            elif self.queue_filter_mode == "Queued":
+            if getattr(self, "queue_filter_mode", "Queued") == "Queued":
                 hide = not is_queued
             elif self.queue_filter_mode == "Downloading":
                 hide = not is_dl
@@ -2137,8 +2178,6 @@ class LibgenDialog(QDialog):
             self.queue_table.setRowHidden(row, hide)
 
         if hasattr(self, "queue_filter_btns"):
-            if "All" in self.queue_filter_btns:
-                self.queue_filter_btns["All"].setText(f"All ({total_cnt})")
             if "Queued" in self.queue_filter_btns:
                 self.queue_filter_btns["Queued"].setText(f"Queued ({queued_cnt})")
             if "Downloading" in self.queue_filter_btns:
@@ -2463,7 +2502,7 @@ class LibgenDialog(QDialog):
         self.stop_download_btn.setEnabled(True)
         self.stop_download_btn.setText("Stop Download")
         self.status_label.setText(f"0/{self.session_total} downloaded ({remaining} remaining)")
-        self.tabs.setTabText(1, f"Queue ({remaining} left)")
+        self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)")
         self.append_log(f"--- Starting Bulk Download: {remaining} remaining item(s) ---")
 
         do_auto_retry = False
@@ -2542,12 +2581,12 @@ class LibgenDialog(QDialog):
                 total = getattr(self, "session_total", len(self.session_target_indices))
                 remaining = max(0, total - completed)
                 self.status_label.setText(f"{completed}/{total} downloaded ({remaining} remaining)")
-                self.tabs.setTabText(1, f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
             else:
                 downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
                 remaining = max(0, len(self.queue_items) - downloaded)
                 self.status_label.setText(f"{downloaded}/{len(self.queue_items)} downloaded ({remaining} remaining)")
-                self.tabs.setTabText(1, f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
 
     def on_item_progress(self, idx, bytes_read, total_bytes, speed_kb):
         if total_bytes > 0:
@@ -2567,12 +2606,12 @@ class LibgenDialog(QDialog):
                 total = getattr(self, "session_total", len(self.session_target_indices))
                 remaining = max(0, total - completed)
                 self.status_label.setText(f"{completed}/{total} downloaded ({remaining} remaining)")
-                self.tabs.setTabText(1, f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
             else:
                 downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
                 remaining = max(0, len(self.queue_items) - downloaded)
                 self.status_label.setText(f"{downloaded}/{len(self.queue_items)} downloaded ({remaining} remaining)")
-                self.tabs.setTabText(1, f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
 
     def import_books_to_library(self, file_paths):
         """Batch import downloaded books into Calibre library."""
@@ -2751,7 +2790,7 @@ class LibgenDialog(QDialog):
                 if "fail" in st or "stop" in st:
                     itm["status"] = "Queued (Ready to retry)"
                     self.queue_table.setItem(idx, 4, QTableWidgetItem("Queued (Ready to retry)"))
-            self.tabs.setCurrentIndex(1)
+            self.set_current_tab_widget(getattr(self, "tab_queue", None))
             self.append_log(f"↻ Preserved {fail_count} failed download(s) and chunks in Queue for later retry.")
 
     def save_all_field_preferences(self, *args):
