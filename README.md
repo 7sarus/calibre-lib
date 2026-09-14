@@ -1,6 +1,7 @@
 # Calibre LibGen Downloader (`calibre-lib`)
 
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/7sarus/calibre-lib?include_prereleases&color=blue)](https://github.com/7sarus/calibre-lib/releases)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/x2cZK7MT)
 [![GitHub stars](https://img.shields.io/github/stars/7sarus/calibre-lib?style=social)](https://github.com/7sarus/calibre-lib/stargazers)
 [![GitHub all releases](https://img.shields.io/github/downloads/7sarus/calibre-lib/total)](https://github.com/7sarus/calibre-lib/releases)
 [![License: WTFPL](https://img.shields.io/badge/License-WTFPL-brightgreen.svg)](LICENSE)
@@ -131,15 +132,49 @@ Configure:
 - **AI / LLM Assisted**: This rewrite was developed with the assistance of an LLM pair programmer.
 - **For Fun**: This is strictly a "just for fun" experimental hobby project created for personal exploration and enjoyment.
 
-## 📦 Releases
+## 💬 Community & Support
 
+Join our Discord server for discussions, feature requests, mirror health updates, and bug reports:  
+👉 **[Join the Discord Community](https://discord.gg/x2cZK7MT)**
+
+---
+
+## 📦 Releases & Version History
+
+- **[v1.10b (Latest Beta)](https://github.com/7sarus/calibre-lib/releases)**:
+  - **Hardcover API Integration**: Import user shelves (*Want to Read*, *Currently Reading*, *Read*, custom lists) via GraphQL with strict ISBN or Title/Author matching modes.
+  - **Calibre Library Book Prefill**: Auto-populates search query when launching plugin with any book record selected in Calibre.
+  - **Reorderable Tabs**: Drag-and-drop movable tabs (`QTabWidget.setMovable(True)`) with dynamic widget resolution and tab order persistence.
+  - **Queue Segmentation & Auto-Retention**: Filter views for `Queued`, `Downloading`, `Downloaded`, and `Failed`. Automatic history pruning older than $X$ days and configurable queue/history limits.
+  - **Table Column Width Persistence**: Restores `results_table`, `queue_table`, and `mirrors_table` column widths across restarts via Qt header state hex serialization.
+  - **Pending / Zero-Result Searches**: Dropdown tracker that captures zero-result queries for one-click re-searching.
+  - **Multi-Language Selector**: Checkable language combobox with compact short code badges.
+  - **Fast Mode (⚡)**: Quick 3s mirror probe that skips dead/unresponsive downloads directly to Failed queue for alternate mirror retrying.
+  - **Discard Dead Mirrors**: Clean up unreachable mirrors from configuration after latency/bandwidth tests.
+- **[v1.0.1 "Godzila" (Hotfix)](https://github.com/7sarus/calibre-lib/releases/tag/v1.0.1)**:
+  - Fixed silent download and resolution failures across newer mirrors (`.li`, `.vg`, `.la`) due to anti-scraping checks.
+  - Smooth animated cover preview text spinner (`⠋ 📖`) while covers load.
+  - In-memory cover caching for zero-latency preview switching.
+  - Natural cover aspect ratio preservation without image distortion.
+  - Persistent queue across dialog sessions and prompt to preserve failed downloads on stop/error.
+  - Multi-attribute deduplication using MD5, file size, and title metadata.
+  - Prominent version badge in status bar (click 3x to toggle hidden download stats).
+- **[v1.0.0 "Godzila"](https://github.com/7sarus/calibre-lib/releases/tag/v1.0.0)**:
+  - Animated retro ASCII companion cat (`(=^.^=)`) in status bar reacting to search and download states.
+  - Multi-threaded concurrent downloading (up to 3 simultaneous books) with live speed meters.
+  - Embedded book cover preview pane for search results and queue.
+  - Compact two-row search toolbar layout fitting small displays.
+  - Multi-mirror failover and live scrolling activity log.
+  - Retro ASCII progress bars inside queue table.
+  - Controlled sandbox review modal before importing files into Calibre library.
 - **[v0.2.0 "Batarang"](https://github.com/7sarus/calibre-lib/releases/tag/v0.2.0)**:
   - Live mirror bandwidth benchmarking (throughput alongside latency).
   - One-click "Sort by Speed" button with automatic primary mirror reordering.
   - Search field targeting (`Title`, `Author`, `Series`, `Publisher`, `Year`, `ISBN`).
   - Dedicated "Mirrors & Health" table with separate latency and speed columns.
   - Custom mirror add/remove with persistence.
-- **[v0.1.0-alpha](https://github.com/7sarus/calibre-lib/releases/tag/v0.1.0-alpha)**: Initial Calibre plugin port with bulk queue and library ingestion.
+- **[v0.1.0-alpha](https://github.com/7sarus/calibre-lib/releases/tag/v0.1.0-alpha)**:
+  - Initial Calibre User Interface Action plugin port with bulk queue and library ingestion.
 
 ---
 
