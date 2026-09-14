@@ -6,6 +6,8 @@ Configuration settings and preferences UI for the LibGen Store plugin.
 """
 
 import os
+import time
+import json
 from calibre.utils.config import JSONConfig
 from qt.core import (
     QWidget,
@@ -17,12 +19,14 @@ from qt.core import (
     QLabel,
     QGroupBox,
     QCheckBox,
+    QPushButton,
+    QMessageBox,
 )
 
 # Plugin Version definitions
 PLUGIN_VERSION = (1, 10, 0, "b")
 _BASE_VERSION_STR = "v1.10b"
-_BUILD_COMMIT = "48"
+_BUILD_COMMIT = "50"
 
 
 def _resolve_version_str():
@@ -72,6 +76,9 @@ prefs.defaults["unique_results"] = True
 prefs.defaults["fast_mode"] = False
 prefs.defaults["preferred_languages"] = ["Any"]
 prefs.defaults["save_search_history"] = False
+prefs.defaults["max_search_history"] = 50
+prefs.defaults["max_download_history"] = 50
+prefs.defaults["history_retention_days"] = 30
 
 SEARCH_FIELDS = {
     "All Fields": "",
@@ -191,51 +198,236 @@ def get_fastest_cdns():
     cdns = prefs.get("fastest_cdns", {})
     if not isinstance(cdns, dict):
         return []
+    return sorted(cdns.items(), key=lambda item: item[1], reverse=True)
+
+
 def get_search_history_filepath():
     """Returns absolute path to local search history file."""
     try:
         from calibre.utils.config import config_dir
         target_dir = os.path.join(config_dir, "plugins")
         os.makedirs(target_dir, exist_ok=True)
-        return os.path.join(target_dir, "libgen_search_history.txt")
+        return os.path.join(target_dir, "libgen_search_history.json")
     except Exception:
-        return os.path.expanduser("~/.calibre_libgen_history.txt")
+        return os.path.expanduser("~/.calibre_libgen_search_history.json")
+
+
+def get_download_history_filepath():
+    """Returns absolute path to local download history file."""
+    try:
+        from calibre.utils.config import config_dir
+        target_dir = os.path.join(config_dir, "plugins")
+        os.makedirs(target_dir, exist_ok=True)
+        return os.path.join(target_dir, "libgen_download_history.json")
+    except Exception:
+        return os.path.expanduser("~/.calibre_libgen_download_history.json")
+
+
+def _load_search_history_raw():
+    filepath = get_search_history_filepath()
+    if os.path.exists(filepath):
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception:
+            pass
+
+    # Migration from legacy plain-text libgen_search_history.txt if it exists
+    try:
+        from calibre.utils.config import config_dir
+        old_path = os.path.join(config_dir, "plugins", "libgen_search_history.txt")
+    except Exception:
+        old_path = os.path.expanduser("~/.calibre_libgen_history.txt")
+
+    if os.path.exists(old_path):
+        try:
+            with open(old_path, "r", encoding="utf-8") as f:
+                lines = [l.strip() for l in f if l.strip()]
+            entries = [{"query": q, "timestamp": time.time()} for q in lines]
+            _save_search_history_raw(entries)
+            return entries
+        except Exception:
+            pass
+
+    return []
+
+
+def _save_search_history_raw(entries):
+    filepath = get_search_history_filepath()
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(entries, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 
 def append_search_history(query):
-    """Appends query to local search history file if enabled, avoiding consecutive duplicates."""
+    """Appends query to local search history with timestamp, enforcing max entries and retention days."""
     if not query or not query.strip():
         return
     query = query.strip()
     if not prefs.get("save_search_history", False):
         return
-    filepath = get_search_history_filepath()
-    try:
-        last_line = None
-        if os.path.exists(filepath):
-            with open(filepath, "r", encoding="utf-8") as f:
-                lines = [l.strip() for l in f if l.strip()]
-                if lines:
-                    last_line = lines[-1]
-        if last_line != query:
-            with open(filepath, "a", encoding="utf-8") as f:
-                f.write(query + "\n")
-    except Exception:
-        pass
+
+    now = time.time()
+    retention_days = int(prefs.get("history_retention_days", 30))
+    max_items = int(prefs.get("max_search_history", 50))
+    cutoff = (now - (retention_days * 86400)) if retention_days > 0 else 0
+
+    entries = _load_search_history_raw()
+    if cutoff > 0:
+        entries = [e for e in entries if e.get("timestamp", now) >= cutoff]
+
+    if entries and entries[-1].get("query") == query:
+        entries[-1]["timestamp"] = now
+    else:
+        entries.append({"query": query, "timestamp": now})
+
+    if len(entries) > max_items:
+        entries = entries[-max_items:]
+
+    _save_search_history_raw(entries)
 
 
 def get_search_history():
-    """Reads historical search queries from local file."""
+    """Reads historical search queries, filtering expired entries and keeping order."""
     if not prefs.get("save_search_history", False):
         return []
-    filepath = get_search_history_filepath()
-    try:
-        if os.path.exists(filepath):
+    now = time.time()
+    retention_days = int(prefs.get("history_retention_days", 30))
+    cutoff = (now - (retention_days * 86400)) if retention_days > 0 else 0
+
+    entries = _load_search_history_raw()
+    valid = []
+    for e in entries:
+        if cutoff > 0 and e.get("timestamp", now) < cutoff:
+            continue
+        q = e.get("query")
+        if q:
+            valid.append(q)
+    return valid
+
+
+def clear_search_history():
+    """Wipes all search query history."""
+    _save_search_history_raw([])
+
+
+def _load_download_history_raw():
+    filepath = get_download_history_filepath()
+    if os.path.exists(filepath):
+        try:
             with open(filepath, "r", encoding="utf-8") as f:
-                return [l.strip() for l in f if l.strip()]
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+        except Exception:
+            pass
+    return []
+
+
+def _save_download_history_raw(entries):
+    filepath = get_download_history_filepath()
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(entries, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
-    return []
+
+
+def append_download_history(book, file_path=""):
+    """Records a downloaded book entry with timestamp, enforcing max entries and retention days."""
+    if not book:
+        return
+    now = time.time()
+    retention_days = int(prefs.get("history_retention_days", 30))
+    max_items = int(prefs.get("max_download_history", 50))
+    cutoff = (now - (retention_days * 86400)) if retention_days > 0 else 0
+
+    entries = _load_download_history_raw()
+    if cutoff > 0:
+        entries = [e for e in entries if e.get("timestamp", now) >= cutoff]
+
+    title = getattr(book, "title", "") or ""
+    author = getattr(book, "author", "") or ""
+    ext = getattr(book, "extension", "") or ""
+    size = getattr(book, "size", "") or ""
+    md5 = getattr(book, "md5", "") or ""
+    detail_url = getattr(book, "detail_url", "") or ""
+
+    existing = False
+    for e in entries:
+        if (md5 and e.get("md5") == md5) or (title and e.get("title") == title and e.get("author") == author and e.get("extension") == ext):
+            e["timestamp"] = now
+            if file_path:
+                e["file_path"] = file_path
+            existing = True
+            break
+
+    if not existing:
+        entries.append({
+            "title": title,
+            "author": author,
+            "extension": ext,
+            "size": size,
+            "md5": md5,
+            "detail_url": detail_url,
+            "file_path": file_path,
+            "timestamp": now,
+        })
+
+    if len(entries) > max_items:
+        entries = entries[-max_items:]
+
+    _save_download_history_raw(entries)
+
+
+def get_download_history():
+    """Returns list of downloaded book records, filtering expired entries."""
+    now = time.time()
+    retention_days = int(prefs.get("history_retention_days", 30))
+    cutoff = (now - (retention_days * 86400)) if retention_days > 0 else 0
+
+    entries = _load_download_history_raw()
+    if cutoff > 0:
+        return [e for e in entries if e.get("timestamp", now) >= cutoff]
+    return entries
+
+
+def clear_download_history():
+    """Wipes all download history records."""
+    _save_download_history_raw([])
+
+
+def clear_all_history(history_type="all"):
+    """Wipes history ('search', 'download', or 'all')."""
+    if history_type in ("search", "all"):
+        clear_search_history()
+    if history_type in ("download", "all"):
+        clear_download_history()
+
+
+def cleanup_expired_history():
+    """Purges expired entries across search and download history according to retention policy."""
+    now = time.time()
+    retention_days = int(prefs.get("history_retention_days", 30))
+    if retention_days <= 0:
+        return
+    cutoff = now - (retention_days * 86400)
+
+    # Clean search history
+    s_entries = _load_search_history_raw()
+    s_filtered = [e for e in s_entries if e.get("timestamp", now) >= cutoff]
+    if len(s_filtered) != len(s_entries):
+        _save_search_history_raw(s_filtered)
+
+    # Clean download history
+    d_entries = _load_download_history_raw()
+    d_filtered = [e for e in d_entries if e.get("timestamp", now) >= cutoff]
+    if len(d_filtered) != len(d_entries):
+        _save_download_history_raw(d_filtered)
 
 
 SUPPORTED_LANGUAGES = [
@@ -339,13 +531,39 @@ class ConfigWidget(QWidget):
         self.max_results_spin.setValue(int(prefs.get("max_results", 5)))
         filter_layout.addRow("Max Results per Search:", self.max_results_spin)
 
-        # Search Query History (Opt-in)
-        self.save_history_checkbox = QCheckBox("Save search query history to local file", self)
+        # History & Retention Preferences
+        history_group = QGroupBox("History & Retention Preferences")
+        history_layout = QFormLayout(history_group)
+
+        self.save_history_checkbox = QCheckBox("Save search query history and enable autocomplete", self)
         self.save_history_checkbox.setChecked(bool(prefs.get("save_search_history", False)))
         self.save_history_checkbox.setToolTip(f"Preserves searched queries locally in {get_search_history_filepath()}")
-        filter_layout.addRow("Search History:", self.save_history_checkbox)
+        history_layout.addRow("Search History:", self.save_history_checkbox)
+
+        self.max_search_history_spin = QSpinBox(self)
+        self.max_search_history_spin.setRange(5, 1000)
+        self.max_search_history_spin.setValue(int(prefs.get("max_search_history", 50)))
+        history_layout.addRow("Max Search History Entries:", self.max_search_history_spin)
+
+        self.max_download_history_spin = QSpinBox(self)
+        self.max_download_history_spin.setRange(5, 1000)
+        self.max_download_history_spin.setValue(int(prefs.get("max_download_history", 50)))
+        history_layout.addRow("Max Download History Entries:", self.max_download_history_spin)
+
+        self.retention_days_spin = QSpinBox(self)
+        self.retention_days_spin.setRange(0, 365)
+        self.retention_days_spin.setSuffix(" days")
+        self.retention_days_spin.setSpecialValueText("Never (Keep indefinitely)")
+        self.retention_days_spin.setValue(int(prefs.get("history_retention_days", 30)))
+        self.retention_days_spin.setToolTip("Auto-clears search and download history older than X days. Set to 0 to disable.")
+        history_layout.addRow("Clear History After:", self.retention_days_spin)
+
+        self.clear_history_btn = QPushButton("Clear All History Now", self)
+        self.clear_history_btn.clicked.connect(self._confirm_clear_history)
+        history_layout.addRow("", self.clear_history_btn)
 
         self.layout.addWidget(filter_group)
+        self.layout.addWidget(history_group)
 
         # Informational note
         note = QLabel(
@@ -356,6 +574,18 @@ class ConfigWidget(QWidget):
         self.layout.addWidget(note)
         self.layout.addStretch()
 
+    def _confirm_clear_history(self):
+        reply = QMessageBox.question(
+            self,
+            "Clear History",
+            "Are you sure you want to clear all search query and download history?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            clear_all_history("all")
+            QMessageBox.information(self, "History Cleared", "Search and download history have been cleared.")
+
     def save_settings(self):
         prefs["primary_mirror"] = self.primary_mirror_edit.text().strip()
         prefs["fallback_mirrors"] = self.fallback_mirrors_edit.text().strip()
@@ -365,4 +595,7 @@ class ConfigWidget(QWidget):
         prefs["filter_mode"] = self.filter_mode_combo.currentText().strip()
         prefs["max_results"] = self.max_results_spin.value()
         prefs["save_search_history"] = self.save_history_checkbox.isChecked()
+        prefs["max_search_history"] = self.max_search_history_spin.value()
+        prefs["max_download_history"] = self.max_download_history_spin.value()
+        prefs["history_retention_days"] = self.retention_days_spin.value()
 

@@ -44,6 +44,7 @@ from qt.core import (
     QStandardItem,
     QStandardItemModel,
     QCompleter,
+    QFormLayout,
 )
 
 
@@ -64,6 +65,11 @@ from calibre_plugins.libgen_store.config import (
     append_search_history,
     get_search_history,
     get_search_history_filepath,
+    append_download_history,
+    get_download_history,
+    clear_download_history,
+    clear_all_history,
+    cleanup_expired_history,
 )
 from calibre_plugins.libgen_store.scraper import LibgenScraper, LibgenBook
 
@@ -523,6 +529,78 @@ class BulkDownloadWorker(QThread):
         self.all_done.emit(downloaded_items, fail_count, bool(self._is_aborted))
 
 
+class HistorySettingsDialog(QDialog):
+    """Configuration dialog for search & download history limits and auto-retention."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("History & Retention Settings")
+        self.setMinimumWidth(380)
+        layout = QVBoxLayout(self)
+
+        form = QFormLayout()
+        self.save_history_checkbox = QCheckBox("Save search query history and enable autocomplete", self)
+        self.save_history_checkbox.setChecked(bool(prefs.get("save_search_history", False)))
+        form.addRow("Search History:", self.save_history_checkbox)
+
+        self.max_search_spin = QSpinBox(self)
+        self.max_search_spin.setRange(5, 1000)
+        self.max_search_spin.setValue(int(prefs.get("max_search_history", 50)))
+        form.addRow("Max Search Queries:", self.max_search_spin)
+
+        self.max_dl_spin = QSpinBox(self)
+        self.max_dl_spin.setRange(5, 1000)
+        self.max_dl_spin.setValue(int(prefs.get("max_download_history", 50)))
+        form.addRow("Max Download History:", self.max_dl_spin)
+
+        self.retention_spin = QSpinBox(self)
+        self.retention_spin.setRange(0, 365)
+        self.retention_spin.setSuffix(" days")
+        self.retention_spin.setSpecialValueText("Never (Keep indefinitely)")
+        self.retention_spin.setValue(int(prefs.get("history_retention_days", 30)))
+        self.retention_spin.setToolTip("Auto-clears search queries and download logs older than X days. Set to 0 to disable.")
+        form.addRow("Clear History After:", self.retention_spin)
+
+        layout.addLayout(form)
+
+        btn_row = QHBoxLayout()
+        self.clear_all_btn = QPushButton("Clear All History", self)
+        self.clear_all_btn.clicked.connect(self.on_clear_all)
+        btn_row.addWidget(self.clear_all_btn)
+        btn_row.addStretch()
+
+        self.save_btn = QPushButton("Save", self)
+        self.save_btn.setStyleSheet("font-weight: bold; background-color: #2b5b84; color: white;")
+        self.save_btn.clicked.connect(self.on_save)
+        btn_row.addWidget(self.save_btn)
+
+        self.cancel_btn = QPushButton("Cancel", self)
+        self.cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(self.cancel_btn)
+
+        layout.addLayout(btn_row)
+
+    def on_clear_all(self):
+        reply = QMessageBox.question(
+            self,
+            "Clear History",
+            "Are you sure you want to clear all search query and download history?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            clear_all_history("all")
+            QMessageBox.information(self, "History Cleared", "Search and download history have been cleared.")
+
+    def on_save(self):
+        prefs["save_search_history"] = self.save_history_checkbox.isChecked()
+        prefs["max_search_history"] = self.max_search_spin.value()
+        prefs["max_download_history"] = self.max_dl_spin.value()
+        prefs["history_retention_days"] = self.retention_spin.value()
+        cleanup_expired_history()
+        self.accept()
+
+
 class ReviewImportDialog(QDialog):
     """Review modal presented after download completion or abortion to select books for Calibre import."""
 
@@ -680,6 +758,7 @@ class LibgenDialog(QDialog):
         self.version_click_timer.setSingleShot(True)
         self.version_click_timer.timeout.connect(self._reset_version_clicks)
 
+        cleanup_expired_history()
         self._setup_ui()
         self.populate_mirrors_table()
         self.load_queue()
@@ -815,6 +894,12 @@ class LibgenDialog(QDialog):
         self.history_checkbox.setChecked(bool(prefs.get("save_search_history", False)))
         self.history_checkbox.stateChanged.connect(self.on_history_toggled)
         row2.addWidget(self.history_checkbox)
+
+        self.history_settings_btn = QPushButton("⚙", self)
+        self.history_settings_btn.setToolTip("Configure search & download history limits and auto-retention")
+        self.history_settings_btn.setFixedWidth(28)
+        self.history_settings_btn.clicked.connect(self.open_history_settings)
+        row2.addWidget(self.history_settings_btn)
         
         row2.addStretch(1)
 
@@ -898,7 +983,7 @@ class LibgenDialog(QDialog):
         self.queue_filter_mode = "All"
         self.queue_filter_btns = {}
 
-        for mode in ("All", "Queued", "Downloading", "Failed"):
+        for mode in ("All", "Queued", "Downloading", "Downloaded", "Failed"):
             btn = QPushButton(f"{mode} (0)", self)
             btn.setCheckable(True)
             if mode == "All":
@@ -946,6 +1031,11 @@ class LibgenDialog(QDialog):
         self.remove_queue_btn = QPushButton("Remove Selected", self)
         self.remove_queue_btn.clicked.connect(self.remove_from_queue)
         queue_btn_bar.addWidget(self.remove_queue_btn)
+
+        self.clear_downloaded_btn = QPushButton("Clear Downloaded", self)
+        self.clear_downloaded_btn.setToolTip("Remove downloaded / completed items from queue")
+        self.clear_downloaded_btn.clicked.connect(self.clear_downloaded_items)
+        queue_btn_bar.addWidget(self.clear_downloaded_btn)
 
         self.clear_queue_btn = QPushButton("Clear Queue", self)
         self.clear_queue_btn.clicked.connect(self.clear_queue)
@@ -1303,6 +1393,13 @@ class LibgenDialog(QDialog):
             prefs["save_search_history"] = self.history_checkbox.isChecked()
             self.setup_search_completer()
 
+    def open_history_settings(self):
+        dlg = HistorySettingsDialog(self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            if hasattr(self, "history_checkbox"):
+                self.history_checkbox.setChecked(bool(prefs.get("save_search_history", False)))
+            self.setup_search_completer()
+
     # --- Search Handlers ---
     def start_search(self):
         query = self.search_input.text().strip()
@@ -1504,6 +1601,7 @@ class LibgenDialog(QDialog):
                     "status": q.get("status", "Queued"),
                     "progress": q.get("progress", 0),
                     "dest_file": q.get("dest_file", ""),
+                    "download_timestamp": q.get("download_timestamp", 0),
                 })
         prefs["saved_queue_items"] = saved
 
@@ -1512,15 +1610,40 @@ class LibgenDialog(QDialog):
         saved = prefs.get("saved_queue_items", [])
         if not isinstance(saved, list):
             return
-        for item in saved:
+
+        now = time.time()
+        retention_days = int(prefs.get("history_retention_days", 30))
+        max_downloads = int(prefs.get("max_download_history", 50))
+        cutoff = (now - (retention_days * 86400)) if retention_days > 0 else 0
+
+        dl_count = 0
+        valid_items = []
+
+        for item in reversed(saved):
             b_dict = item.get("book")
-            if b_dict and isinstance(b_dict, dict):
-                self.queue_items.append({
-                    "book": deserialize_book(b_dict),
-                    "status": item.get("status", "Queued"),
-                    "progress": item.get("progress", 0),
-                    "dest_file": item.get("dest_file", ""),
-                })
+            if not (b_dict and isinstance(b_dict, dict)):
+                continue
+            status = item.get("status", "Queued")
+            is_dl = "downloaded" in status.lower() or "added" in status.lower()
+            dl_ts = item.get("download_timestamp", 0)
+
+            if is_dl:
+                if cutoff > 0 and dl_ts > 0 and dl_ts < cutoff:
+                    continue
+                if dl_count >= max_downloads:
+                    continue
+                dl_count += 1
+
+            valid_items.append({
+                "book": deserialize_book(b_dict),
+                "status": status,
+                "progress": item.get("progress", 0),
+                "dest_file": item.get("dest_file", ""),
+                "download_timestamp": dl_ts,
+            })
+
+        valid_items.reverse()
+        self.queue_items = valid_items
         if self.queue_items:
             self.update_queue_table()
 
@@ -1575,19 +1698,32 @@ class LibgenDialog(QDialog):
 
         queued_cnt = 0
         dl_cnt = 0
+        downloaded_cnt = 0
         failed_cnt = 0
         total_cnt = len(self.queue_items)
 
         for row, q in enumerate(self.queue_items):
             status = str(q.get("status", "")).lower()
-            is_queued = "queued" in status
-            is_dl = "downloading" in status or "resolving" in status or "streaming" in status or "piece-together" in status
-            is_failed = "failed" in status or "error" in status or "skipped" in status
+            is_downloaded = "downloaded" in status or "added" in status
+            is_queued = "queued" in status and not is_downloaded
+            is_dl = (
+                "downloading" in status
+                or "resolving" in status
+                or "streaming" in status
+                or "piece-together" in status
+            ) and not is_downloaded
+            is_failed = (
+                "failed" in status
+                or "error" in status
+                or "skipped" in status
+            ) and not is_downloaded
 
             if is_queued:
                 queued_cnt += 1
             elif is_dl:
                 dl_cnt += 1
+            elif is_downloaded:
+                downloaded_cnt += 1
             elif is_failed:
                 failed_cnt += 1
 
@@ -1597,6 +1733,8 @@ class LibgenDialog(QDialog):
                 hide = not is_queued
             elif self.queue_filter_mode == "Downloading":
                 hide = not is_dl
+            elif self.queue_filter_mode == "Downloaded":
+                hide = not is_downloaded
             elif self.queue_filter_mode == "Failed":
                 hide = not is_failed
             else:
@@ -1611,8 +1749,17 @@ class LibgenDialog(QDialog):
                 self.queue_filter_btns["Queued"].setText(f"Queued ({queued_cnt})")
             if "Downloading" in self.queue_filter_btns:
                 self.queue_filter_btns["Downloading"].setText(f"Downloading ({dl_cnt})")
+            if "Downloaded" in self.queue_filter_btns:
+                self.queue_filter_btns["Downloaded"].setText(f"Downloaded ({downloaded_cnt})")
             if "Failed" in self.queue_filter_btns:
                 self.queue_filter_btns["Failed"].setText(f"Failed ({failed_cnt})")
+
+    def clear_downloaded_items(self):
+        self.queue_items = [
+            q for q in self.queue_items
+            if not ("downloaded" in str(q.get("status", "")).lower() or "added" in str(q.get("status", "")).lower())
+        ]
+        self.update_queue_table()
 
     def remove_from_queue(self):
         selected_rows = sorted(set(idx.row() for idx in self.queue_table.selectedIndexes()), reverse=True)
@@ -1983,6 +2130,11 @@ class LibgenDialog(QDialog):
                 status_item.setForeground(QColor("#ef4444"))
             elif "downloaded" in st_lower or "added" in st_lower:
                 status_item.setForeground(QColor("#22c55e"))
+                self.queue_items[idx]["download_timestamp"] = time.time()
+                bk = self.queue_items[idx].get("book")
+                dest = self.queue_items[idx].get("dest_file", "")
+                if bk:
+                    append_download_history(bk, dest)
             self.queue_table.setItem(idx, 4, status_item)
             self.apply_queue_filter()
             
