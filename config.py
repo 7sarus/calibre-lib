@@ -57,13 +57,39 @@ PLUGIN_VERSION_STR = _resolve_version_str()
 # Store configuration under Calibre's standard plugin config path
 prefs = JSONConfig("plugins/libgen_store")
 
+PERMANENT_MIRRORS = (
+    "https://libgen.li",
+    "https://libgen.me",
+)
+DEFAULT_FALLBACK_MIRRORS = (
+    "https://libgen.me",
+    "https://libgen.rs",
+    "https://libgen.is",
+    "https://libgen.st",
+    "https://libgen.vg",
+    "https://libgen.gl",
+    "https://libgen.bz",
+    "https://libgen.gs",
+    "https://libgen.lc",
+    "https://libgen.la",
+)
+_VALID_MIRROR_RE = re.compile(r"^https?://(?:www\.)?libgen\.[a-z]{2,}(?::\d+)?/?$", re.IGNORECASE)
+
+
+def normalize_mirror_url(url):
+    """Returns a canonical LibGen mirror URL, or an empty string for invalid links."""
+    clean = (url or "").strip().rstrip("/")
+    if not clean:
+        return ""
+    if not clean.startswith(("http://", "https://")):
+        clean = "https://" + clean
+    if not _VALID_MIRROR_RE.match(clean):
+        return ""
+    return clean.lower()
+
 # Default preferences
 prefs.defaults["primary_mirror"] = "https://libgen.li"
-prefs.defaults["fallback_mirrors"] = (
-    "https://libgen.rs, https://libgen.is, https://libgen.st, "
-    "https://libgen.vg, https://libgen.gl, https://libgen.bz, "
-    "https://libgen.gs, https://libgen.lc, https://libgen.la"
-)
+prefs.defaults["fallback_mirrors"] = ", ".join(DEFAULT_FALLBACK_MIRRORS)
 prefs.defaults["preferred_language"] = "English"
 prefs.defaults["preferred_format"] = "Any"
 prefs.defaults["custom_mirrors"] = []
@@ -73,11 +99,15 @@ prefs.defaults["search_category"] = "All Categories"
 prefs.defaults["filter_mode"] = "Prioritize"
 prefs.defaults["last_search_query"] = ""
 prefs.defaults["last_successful_mirror"] = ""
+prefs.defaults["mirror_success_counts"] = {}
 prefs.defaults["max_results"] = 5
+prefs.defaults["search_timeout"] = 8
 prefs.defaults["show_download_stats"] = True
 prefs.defaults["fastest_cdns"] = {}
 prefs.defaults["unique_results"] = True
 prefs.defaults["fast_mode"] = False
+prefs.defaults["download_action"] = "Import to Calibre"
+prefs.defaults["download_directory"] = os.path.join(os.path.expanduser("~"), "Downloads", "callib")
 prefs.defaults["save_search_history"] = False
 prefs.defaults["max_search_history"] = 50
 prefs.defaults["max_download_history"] = 50
@@ -87,6 +117,17 @@ prefs.defaults["hardcover_token"] = ""
 prefs.defaults["hardcover_match_mode"] = "ISBN Only"
 prefs.defaults["hardcover_max_queue_limit"] = 10
 prefs.defaults["hardcover_skip_in_library"] = True
+prefs.defaults["hardcover_shelves_cache"] = {}
+prefs.defaults["hardcover_books_cache"] = {}
+prefs.defaults["hardcover_dialog_width"] = 780
+prefs.defaults["hardcover_dialog_height"] = 520
+prefs.defaults["hardcover_books_table_header"] = ""
+prefs.defaults["review_dialog_width"] = 760
+prefs.defaults["review_dialog_height"] = 420
+prefs.defaults["review_table_header"] = ""
+prefs.defaults["cover_panel_width"] = 200
+prefs.defaults["cover_panel_height"] = 300
+prefs.defaults["log_panel_height"] = 120
 prefs.defaults["dialog_width"] = 1000
 prefs.defaults["dialog_height"] = 620
 
@@ -111,35 +152,52 @@ CATEGORIES = {
 
 def get_mirrors():
     """Returns an ordered list of unique mirrors. Prioritizes last_successful_mirror at the top."""
-    primary = prefs.get("primary_mirror", "https://libgen.li").strip().rstrip("/")
+    primary = normalize_mirror_url(prefs.get("primary_mirror", "https://libgen.li")) or "https://libgen.li"
     fallback_str = prefs.get("fallback_mirrors", "")
-    fallbacks = [m.strip().rstrip("/") for m in fallback_str.split(",") if m.strip()]
-    custom = [m.strip().rstrip("/") for m in prefs.get("custom_mirrors", []) if m.strip()]
+    fallbacks = [normalize_mirror_url(m) for m in fallback_str.split(",")]
+    custom = [normalize_mirror_url(m) for m in prefs.get("custom_mirrors", [])]
+    cleaned_fallbacks = [m for m in fallbacks if m]
+    cleaned_custom = [m for m in custom if m]
+
+    if cleaned_fallbacks != [m.strip().rstrip("/") for m in fallback_str.split(",") if m.strip()]:
+        prefs["fallback_mirrors"] = ", ".join(cleaned_fallbacks)
+    if cleaned_custom != prefs.get("custom_mirrors", []):
+        prefs["custom_mirrors"] = cleaned_custom
 
     mirrors = []
-    last_succ = prefs.get("last_successful_mirror", "").strip().rstrip("/")
+    last_succ = normalize_mirror_url(prefs.get("last_successful_mirror", ""))
     if last_succ:
         mirrors.append(last_succ)
 
-    for m in [primary] + fallbacks + custom:
+    for m in [primary] + list(PERMANENT_MIRRORS) + cleaned_fallbacks + cleaned_custom:
         if m and m not in mirrors:
             mirrors.append(m)
     return mirrors
 
 def record_successful_mirror(mirror_url):
-    """Persists the specified mirror as the last successful mirror for next operations."""
+    """Persists mirror success and promotes the most successful mirror to primary."""
     if not mirror_url:
         return
-    clean = mirror_url.strip().rstrip("/")
+    clean = normalize_mirror_url(mirror_url)
     if clean:
         with _prefs_lock:
             prefs["last_successful_mirror"] = clean
+            counts = prefs.get("mirror_success_counts", {})
+            if not isinstance(counts, dict):
+                counts = {}
+            counts[clean] = int(counts.get(clean, 0)) + 1
+            prefs["mirror_success_counts"] = dict(
+                sorted(counts.items(), key=lambda item: item[1], reverse=True)[:20]
+            )
+            best = max(counts, key=counts.get)
+            if best in get_mirrors():
+                prefs["primary_mirror"] = best
 
 def add_custom_mirror(url):
     with _prefs_lock:
-        url = url.strip().rstrip("/")
-        if not url.startswith("http://") and not url.startswith("https://"):
-            url = "https://" + url
+        url = normalize_mirror_url(url)
+        if not url:
+            return ""
         custom = list(prefs.get("custom_mirrors", []))
         if url not in custom:
             custom.append(url)
@@ -149,13 +207,15 @@ def add_custom_mirror(url):
     return url
 
 def remove_custom_mirror(url):
-    url = url.strip().rstrip("/")
-    custom = [m for m in prefs.get("custom_mirrors", []) if m.rstrip("/") != url]
+    url = normalize_mirror_url(url)
+    custom = [m for m in prefs.get("custom_mirrors", []) if normalize_mirror_url(m) != url]
     prefs["custom_mirrors"] = custom
 
 def discard_mirrors(urls_to_discard):
     """Removes the given URLs from primary, fallback, custom, and last_successful mirrors."""
-    discard_set = set(u.strip().rstrip("/") for u in urls_to_discard if u)
+    discard_set = set(normalize_mirror_url(u) for u in urls_to_discard if u)
+    discard_set.discard("")
+    discard_set.difference_update(PERMANENT_MIRRORS)
     if not discard_set:
         return
 
@@ -169,25 +229,42 @@ def discard_mirrors(urls_to_discard):
     prefs["fallback_mirrors"] = ", ".join(fallbacks)
 
     # 3. Last successful
-    last_succ = prefs.get("last_successful_mirror", "").strip().rstrip("/")
+    last_succ = normalize_mirror_url(prefs.get("last_successful_mirror", ""))
     if last_succ in discard_set:
         prefs["last_successful_mirror"] = ""
 
+    counts = prefs.get("mirror_success_counts", {})
+    if isinstance(counts, dict):
+        prefs["mirror_success_counts"] = {
+            normalize_mirror_url(m): c
+            for m, c in counts.items()
+            if normalize_mirror_url(m) and normalize_mirror_url(m) not in discard_set
+        }
+
     # 4. Primary mirror
-    primary = prefs.get("primary_mirror", "").strip().rstrip("/")
+    primary = normalize_mirror_url(prefs.get("primary_mirror", ""))
     if primary in discard_set:
         remaining = fallbacks + custom
         prefs["primary_mirror"] = remaining[0] if remaining else "https://libgen.li"
 
 def set_mirror_order(sorted_mirrors):
     """Updates mirror order in prefs, setting fastest as primary and others as fallbacks."""
-    if not sorted_mirrors:
+    cleaned = []
+    for m in sorted_mirrors:
+        clean = normalize_mirror_url(m)
+        if clean and clean not in cleaned:
+            cleaned.append(clean)
+    for m in PERMANENT_MIRRORS:
+        if m not in cleaned:
+            cleaned.append(m)
+
+    if not cleaned:
         return
-    primary = sorted_mirrors[0].strip().rstrip("/")
+    primary = cleaned[0]
     prefs["primary_mirror"] = primary
 
-    custom_set = set(m.rstrip("/") for m in prefs.get("custom_mirrors", []))
-    remaining = [m.rstrip("/") for m in sorted_mirrors[1:] if m.rstrip("/") not in custom_set]
+    custom_set = set(normalize_mirror_url(m) for m in prefs.get("custom_mirrors", []))
+    remaining = [m for m in cleaned[1:] if m not in custom_set]
     prefs["fallback_mirrors"] = ", ".join(remaining)
 
 
@@ -555,6 +632,12 @@ class ConfigWidget(QWidget):
         self.timeout_spin.setValue(int(prefs.get("timeout", 20)))
         mirror_layout.addRow("Connection Timeout:", self.timeout_spin)
 
+        self.search_timeout_spin = QSpinBox(self)
+        self.search_timeout_spin.setRange(3, 30)
+        self.search_timeout_spin.setSuffix(" s")
+        self.search_timeout_spin.setValue(int(prefs.get("search_timeout", 8)))
+        mirror_layout.addRow("Search Timeout:", self.search_timeout_spin)
+
         self.layout.addWidget(mirror_group)
 
         # Filter & Preference Settings Group
@@ -661,8 +744,8 @@ class ConfigWidget(QWidget):
         prefs["preferred_format"] = self.format_combo.currentText().strip().upper()
         prefs["filter_mode"] = self.filter_mode_combo.currentText().strip()
         prefs["max_results"] = self.max_results_spin.value()
+        prefs["search_timeout"] = self.search_timeout_spin.value()
         prefs["save_search_history"] = self.save_history_checkbox.isChecked()
         prefs["max_search_history"] = self.max_search_history_spin.value()
         prefs["max_download_history"] = self.max_download_history_spin.value()
         prefs["history_retention_days"] = self.retention_days_spin.value()
-

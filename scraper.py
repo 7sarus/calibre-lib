@@ -31,6 +31,18 @@ _RE_NONWORD = re.compile(r'[\W_]+')
 _RE_BRACKETS = re.compile(r'\[.*?\]|\(.*?\)')
 _RE_MD5 = re.compile(r'(?i)(?:md5=|[/\\])([a-f0-9]{32})\b')
 _RE_WORD = re.compile(r'\w+')
+_RE_MIRROR = re.compile(r"^https?://(?:www\.)?libgen\.[a-z]{2,}(?::\d+)?/?$", re.IGNORECASE)
+
+
+def _clean_mirror_url(url):
+    clean = (url or "").strip().rstrip("/")
+    if not clean:
+        return ""
+    if not clean.startswith(("http://", "https://")):
+        clean = "https://" + clean
+    if not _RE_MIRROR.match(clean):
+        return ""
+    return clean.lower()
 
 
 class LibgenBook:
@@ -56,6 +68,7 @@ class LibgenBook:
 class LibgenScraper:
     DEFAULT_MIRRORS = [
         "https://libgen.li",
+        "https://libgen.me",
         "https://libgen.vg",
         "https://libgen.gl",
         "https://libgen.bz",
@@ -86,7 +99,8 @@ class LibgenScraper:
         return list(mirrors)
 
     def __init__(self, mirrors=None, timeout=20):
-        self.mirrors = mirrors or self.DEFAULT_MIRRORS
+        cleaned = [_clean_mirror_url(m) for m in (mirrors or self.DEFAULT_MIRRORS)]
+        self.mirrors = [m for m in cleaned if m] or list(self.DEFAULT_MIRRORS)
         self.timeout = timeout
         self._mirror_cooldowns = {}  # mirror -> (fail_count, next_retry_time)
 
@@ -147,6 +161,7 @@ class LibgenScraper:
         filter_mode="Prioritize",
         unique_results=True,
         progress_callback=None,
+        partial_results_callback=None,
         abort_check=None,
         auto_field_fallback=True,
     ):
@@ -164,8 +179,16 @@ class LibgenScraper:
             clean_selected = selected_mirror.strip().rstrip("/")
             mirror_order = [clean_selected] + [m for m in mirror_order if m.rstrip("/") != clean_selected]
 
-        clean_mirrors = [m.strip().rstrip("/") for m in mirror_order if m.strip()]
+        clean_mirrors = []
+        seen_mirrors = set()
+        for mirror in mirror_order:
+            clean = mirror.strip().rstrip("/") if mirror else ""
+            if clean and clean not in seen_mirrors:
+                clean_mirrors.append(clean)
+                seen_mirrors.add(clean)
         total_mirrors = len(clean_mirrors)
+        if total_mirrors == 0:
+            return []
 
         # Concurrent first-result-wins: fire searches to all mirrors, return first success
         found_event = threading.Event()
@@ -181,8 +204,24 @@ class LibgenScraper:
                 return True
             return any(l in (b.language or "").lower() for l in pref_langs)
 
-        # When language or format filtering is active, fetch more rows to ensure ample matching candidates
-        fetch_count = max(max_results * 15, 100) if (has_lang_filter or (preferred_format and preferred_format != "Any")) else max(max_results * 4, 25)
+        # Fetch enough for filtering without forcing every normal search to parse 100+ rows.
+        has_format_filter = bool(preferred_format and preferred_format != "Any")
+        if has_lang_filter or has_format_filter:
+            fetch_count = min(100, max(max_results * 8, 40))
+        else:
+            fetch_count = min(60, max(max_results * 4, 20))
+
+        is_field_search = bool(search_field)
+        field_map = {"t": "title", "a": "author", "s": "series", "p": "publisher", "y": "year", "i": "identifier"}
+        classic_col = field_map.get(search_field, "def")
+        modern_field_param = f"&columns%5B%5D={search_field}" if search_field else ""
+        modern_topic_param = f"&topics%5B%5D={category}" if category else "&topics%5B%5D=l&topics%5B%5D=f"
+
+        def _build_search_url(mirror):
+            is_classic = any(h in mirror.lower() for h in ["libgen.is", "libgen.rs", "libgen.st"])
+            if is_classic:
+                return f"{mirror}/search.php?req={encoded_query}&column={classic_col}&res={fetch_count}"
+            return f"{mirror}/index.php?req={encoded_query}{modern_field_param}{modern_topic_param}&res={fetch_count}"
 
         def _search_mirror(mirror):
             if found_event.is_set() or (abort_check and abort_check()):
@@ -191,17 +230,7 @@ class LibgenScraper:
                 return None, mirror
             try:
                 b = self._get_browser()
-
-                # Protocol schema detection: classic mirrors (libgen.is/rs/st) vs modern LibGen Plus (libgen.li/bz/la/gl/vg)
-                is_classic = any(h in mirror.lower() for h in ["libgen.is", "libgen.rs", "libgen.st"])
-                if is_classic:
-                    field_map = {"t": "title", "a": "author", "s": "series", "p": "publisher", "y": "year", "i": "identifier"}
-                    col = field_map.get(search_field, "def")
-                    search_url = f"{mirror}/search.php?req={encoded_query}&column={col}&res={fetch_count}"
-                else:
-                    field_param = f"&columns%5B%5D={search_field}" if search_field else ""
-                    topic_param = f"&topics%5B%5D={category}" if category else "&topics%5B%5D=l&topics%5B%5D=f"
-                    search_url = f"{mirror}/index.php?req={encoded_query}{field_param}{topic_param}&res={fetch_count}"
+                search_url = _build_search_url(mirror)
 
                 with self._open_url(b, search_url, timeout=self.timeout) as resp:
                     if found_event.is_set() or (abort_check and abort_check()):
@@ -221,6 +250,8 @@ class LibgenScraper:
         winning_mirror = ""
         mirrors_done = 0
         current_match_count = 0  # Cache to avoid recomputing on mirror misses
+        last_ranked_books = []
+        last_matching_books = []
 
         def _notify_progress(mirror, current_found):
             if progress_callback:
@@ -268,8 +299,16 @@ class LibgenScraper:
                             query=query,
                         )
                         matching_lang_books = [b for b in ranked_current if book_matches_lang(b)]
+                        last_ranked_books = ranked_current
+                        last_matching_books = matching_lang_books
                         current_match_count = len(matching_lang_books) if has_lang_filter else len(ranked_current)
                         _notify_progress(mirror, min(current_match_count, max_results))
+                        if partial_results_callback:
+                            preview_books = matching_lang_books if has_lang_filter else ranked_current
+                            try:
+                                partial_results_callback(preview_books[:max_results], mirror)
+                            except Exception:
+                                pass
 
                         # Return immediately when target number of language-matching books is found!
                         if current_match_count >= max_results:
@@ -291,22 +330,13 @@ class LibgenScraper:
                 pool.shutdown(wait=False)
 
         if not books and collected_books:
-            processed_books = self._deduplicate_books(collected_books, preferred_format) if unique_results else list(collected_books)
-            ranked_current = self._filter_and_rank(
-                processed_books,
-                preferred_language=preferred_language,
-                preferred_format=preferred_format,
-                filter_mode=filter_mode,
-                query=query,
-            )
-            matching_lang_books = [b for b in ranked_current if book_matches_lang(b)]
-            if has_lang_filter and matching_lang_books:
-                books = matching_lang_books[:max_results]
+            if has_lang_filter and last_matching_books:
+                books = last_matching_books[:max_results]
             elif not has_lang_filter:
-                books = ranked_current[:max_results]
+                books = last_ranked_books[:max_results]
 
         # If targeted field query (e.g. Series 's', Title 't') returned 0 language matches, cascade to All Fields
-        if not books and search_field and auto_field_fallback:
+        if not books and is_field_search and auto_field_fallback:
             return self.search(
                 query=query,
                 search_field="",
@@ -318,6 +348,7 @@ class LibgenScraper:
                 filter_mode=filter_mode,
                 unique_results=unique_results,
                 progress_callback=progress_callback,
+                partial_results_callback=partial_results_callback,
                 abort_check=abort_check,
                 auto_field_fallback=False,
             )
@@ -653,22 +684,60 @@ class LibgenScraper:
                             speed_kb = (bytes_read / 1024) / elapsed if elapsed > 0 else 0
                             progress_callback(bytes_read, total_bytes, speed_kb)
                             last_cb_time = now
+
+            if bytes_read == 0 or (total_bytes > 0 and bytes_read != total_bytes):
+                raise Exception(f"Incomplete download: got {bytes_read}/{total_bytes} bytes")
+            if progress_callback:
+                elapsed = max(time.time() - start_time, 0.001)
+                progress_callback(bytes_read, total_bytes or bytes_read, bytes_read / 1024 / elapsed)
     
             elapsed = time.time() - start_time
             if elapsed > 0 and bytes_read > 0:
                 final_speed_kb = (bytes_read / 1024.0) / elapsed
-                cdn_host = urlparse(download_url).netloc
-                try:
-                    from calibre_plugins.libgen_store.config import record_cdn_speed
-                    record_cdn_speed(cdn_host, final_speed_kb)
-                except Exception:
-                    try:
-                        from config import record_cdn_speed
-                        record_cdn_speed(cdn_host, final_speed_kb)
-                    except Exception:
-                        pass
+                self._record_cdn_speed(download_url, final_speed_kb)
     
             return destination_path
+
+    def _record_cdn_speed(self, stream_url, speed_kb):
+        host = urlparse(stream_url or "").netloc
+        if not host or speed_kb <= 0:
+            return
+        try:
+            from calibre_plugins.libgen_store.config import record_cdn_speed
+            record_cdn_speed(host, speed_kb)
+        except Exception:
+            try:
+                from config import record_cdn_speed
+                record_cdn_speed(host, speed_kb)
+            except Exception:
+                pass
+
+    def _get_recorded_cdn_speeds(self):
+        try:
+            from calibre_plugins.libgen_store.config import get_fastest_cdns
+            return dict(get_fastest_cdns())
+        except Exception:
+            try:
+                from config import get_fastest_cdns
+                return dict(get_fastest_cdns())
+            except Exception:
+                return {}
+
+    def _source_speed_score(self, source, recorded_speeds=None):
+        if recorded_speeds is None:
+            recorded_speeds = self._get_recorded_cdn_speeds()
+        stream_host = urlparse(source.get("stream_url", "")).netloc.lower()
+        learned_speed = float(recorded_speeds.get(stream_host, 0.0) or 0.0)
+        probe_speed = float(source.get("probe_speed_kb", 0.0) or 0.0)
+        return max(learned_speed, probe_speed)
+
+    def _rank_sources_by_throughput(self, sources):
+        recorded_speeds = self._get_recorded_cdn_speeds()
+        return sorted(
+            sources,
+            key=lambda source: self._source_speed_score(source, recorded_speeds),
+            reverse=True,
+        )
 
     def get_fallback_detail_urls(self, detail_url):
         """
@@ -681,6 +750,7 @@ class LibgenScraper:
 
         urls = []
         parsed = urlparse(detail_url)
+        source_host = parsed.netloc.lower()
         md5_match = _RE_MD5.search(detail_url)
         md5 = md5_match.group(1) if md5_match else None
 
@@ -698,13 +768,28 @@ class LibgenScraper:
 
         if md5:
             urls.append(f"https://library.lol/main/{md5}")
+            urls.append(f"https://libgen.me/item/detail/{md5}")
             
         for m in ordered_mirrors:
-            clean_m = m.strip().rstrip("/")
+            clean_m = _clean_mirror_url(m)
             if not clean_m:
                 continue
 
-            if parsed.path:
+            target_host = urlparse(clean_m).netloc.lower()
+            is_modern_target = any(
+                target_host.endswith(h)
+                for h in ("libgen.li", "libgen.me", "libgen.vg", "libgen.gl", "libgen.bz", "libgen.la")
+            )
+            is_classic_target = any(target_host.endswith(h) for h in ("libgen.is", "libgen.rs", "libgen.st"))
+            is_ads_path = parsed.path.startswith(("/ads.php", "/index.php"))
+            is_me_detail_path = parsed.path.startswith("/item/detail/")
+            is_classic_path = parsed.path.startswith(("/book/index.php", "/book/"))
+            can_reuse_path = (
+                (is_modern_target and is_ads_path)
+                or (target_host.endswith("libgen.me") and is_me_detail_path)
+                or (is_classic_target and is_classic_path)
+            )
+            if parsed.path and can_reuse_path and not parsed.path.startswith("/main/"):
                 v1 = f"{clean_m}{parsed.path}"
                 if parsed.query:
                     v1 += f"?{parsed.query}"
@@ -715,6 +800,10 @@ class LibgenScraper:
                 v2 = f"{clean_m}/ads.php?md5={md5}"
                 if v2 not in urls:
                     urls.append(v2)
+                if clean_m.endswith("libgen.me"):
+                    v3 = f"{clean_m}/item/detail/{md5}"
+                    if v3 not in urls:
+                        urls.append(v3)
 
         if md5 and f"https://libgen.li/ads.php?md5={md5}" not in urls:
             urls.append(f"https://libgen.li/ads.php?md5={md5}")
@@ -728,7 +817,7 @@ class LibgenScraper:
         """
         Probes a candidate mirror detail URL, resolves direct link,
         follows redirect to CDN stream URL, checks range support and Content-Length.
-        Reads only 1 byte to validate the stream — does NOT download the full file.
+        Samples the first 64 KB to validate the stream and estimate CDN throughput.
         Returns dict with mirror info or None.
         """
         try:
@@ -749,8 +838,10 @@ class LibgenScraper:
     
                 accepts_ranges = "bytes" in headers.get("Accept-Ranges", "").lower()
     
-                # Read only 1 byte to validate the connection, then discard the rest
-                resp.read(1)
+                sample_start = time.time()
+                sample = resp.read(64 * 1024)
+                sample_elapsed = max(time.time() - sample_start, 0.001)
+                probe_speed_kb = (len(sample) / 1024.0) / sample_elapsed if sample else 0.0
 
             return {
                 "host": host,
@@ -759,6 +850,7 @@ class LibgenScraper:
                 "stream_url": stream_url,
                 "total_bytes": total_bytes,
                 "accepts_ranges": accepts_ranges,
+                "probe_speed_kb": probe_speed_kb,
                 "cover_url": cover_url,
             }
         except Exception:
@@ -786,19 +878,25 @@ class LibgenScraper:
 
             bytes_written = 0
             chunk_size = 128 * 1024
+            start_time = time.time()
             try:
                 b = self._get_browser()
                 req = mechanize.Request(
                     stream_url,
                     headers={
                         "Range": f"bytes={start_byte}-{end_byte}",
+                        "Accept-Encoding": "identity",
                         "User-Agent": self.USER_AGENT,
                     },
                 )
                 with self._open_url(b, req, timeout=self.timeout * 2) as resp:
                     code = getattr(resp, "code", 200)
-                    if code not in (200, 206):
-                        raise Exception(f"HTTP {code} from stream source")
+                    content_range = resp.headers.get("Content-Range", "")
+                    match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+|\*)", content_range.strip())
+                    if code != 206 or not match or (
+                        int(match.group(1)), int(match.group(2))
+                    ) != (start_byte, end_byte):
+                        raise Exception(f"Invalid range response: HTTP {code}, {content_range!r}")
     
                     with open(part_path, "wb") as f:
                         while True:
@@ -807,6 +905,8 @@ class LibgenScraper:
                             chunk = resp.read(chunk_size)
                             if not chunk:
                                 break
+                            if bytes_written + len(chunk) > expected_len:
+                                raise Exception("Range response exceeded requested size")
                             f.write(chunk)
                             bytes_written += len(chunk)
                             if progress_chunk_cb:
@@ -817,9 +917,13 @@ class LibgenScraper:
                         f"Incomplete segment: got {bytes_written}/{expected_len} bytes"
                     )
 
+                elapsed = max(time.time() - start_time, 0.001)
+                self._record_cdn_speed(stream_url, (bytes_written / 1024.0) / elapsed)
                 return part_path
             except Exception as e:
                 last_err = e
+                if progress_chunk_cb and bytes_written:
+                    progress_chunk_cb(-bytes_written)
                 if os.path.exists(part_path):
                     try:
                         os.remove(part_path)
@@ -852,17 +956,17 @@ class LibgenScraper:
             end = total_bytes - 1 if i == num_segments - 1 else (i + 1) * part_size - 1
             ranges.append((start, end))
 
-        source_hosts = [s["host"] for s in range_sources[:num_segments]]
+        ranked_sources = self._rank_sources_by_throughput(range_sources)
+        source_hosts = [urlparse(s["stream_url"]).netloc or s["host"] for s in ranked_sources[:num_segments]]
         if log_callback:
             log_callback(
                 f"⚡ Piece-together active: {num_segments} parallel segments across {', '.join(source_hosts)}"
             )
 
         if link_callback:
-            primary_host = range_sources[0]["host"]
-            link_callback(range_sources[0]["stream_url"], "segmented")
+            link_callback(ranked_sources[0]["stream_url"], "segmented")
 
-        all_stream_urls = [s["stream_url"] for s in range_sources]
+        all_stream_urls = [s["stream_url"] for s in ranked_sources]
 
         progress_lock = threading.Lock()
         shared_bytes = [0]
@@ -933,7 +1037,7 @@ class LibgenScraper:
 
             try:
                 from calibre_plugins.libgen_store.config import record_successful_mirror
-                for s in range_sources[:num_segments]:
+                for s in ranked_sources[:num_segments]:
                     record_successful_mirror(f"https://{s['host']}")
             except Exception:
                 pass
@@ -1030,7 +1134,9 @@ class LibgenScraper:
 
         # Step 1: Concurrently probe candidate mirrors
         working_sources = []
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(candidate_urls), 5)) as pool:
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=min(len(candidate_urls), 5))
+        futures = {}
+        try:
             futures = {pool.submit(self._probe_source, u, probe_timeout): u for u in candidate_urls}
             for fut in concurrent.futures.as_completed(futures):
                 if abort_check and abort_check():
@@ -1041,8 +1147,16 @@ class LibgenScraper:
                         working_sources.append(res)
                         if log_callback:
                             log_callback(f"✓ Mirror {res['host']} online (size: {res['total_bytes']:,} bytes, range: {res['accepts_ranges']})")
+                        # Two independent streams are enough to start; slow probes
+                        # must not delay the transfer behind their full timeouts.
+                        if len({s['stream_url'] for s in working_sources}) >= 2:
+                            break
                 except Exception:
                     pass
+        finally:
+            for future in futures:
+                future.cancel()
+            pool.shutdown(wait=False)
 
         # Fast Mode check: if no responsive mirrors after fast probe, skip immediately
         if fast_mode and not working_sources:
@@ -1053,6 +1167,15 @@ class LibgenScraper:
             s for s in working_sources
             if s.get("accepts_ranges") and s.get("total_bytes", 0) > 200 * 1024
         ]
+
+        # Only combine equal-sized objects, and avoid duplicate CDN streams.
+        if range_sources:
+            expected_size = range_sources[0]["total_bytes"]
+            unique_sources = {}
+            for source in range_sources:
+                if source["total_bytes"] == expected_size:
+                    unique_sources.setdefault(source["stream_url"], source)
+            range_sources = list(unique_sources.values())
 
         if len(range_sources) >= 2:
             try:
@@ -1239,4 +1362,3 @@ class LibgenScraper:
             err = str(e)
             status_msg = "Timed out" if "timed out" in err.lower() else f"Error: {err[:30]}"
             return False, latency, 0.0, "0 KB/s", status_msg
-
