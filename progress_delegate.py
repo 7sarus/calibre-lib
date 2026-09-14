@@ -50,12 +50,12 @@ class ProgressBarDelegate(QStyledItemDelegate):
 
         status_str = str(status or "").strip().lower()
 
-        # Detect dark mode from palette background lightness
         is_dark = option.palette.window().color().lightness() < 128
-
-        # Track background color
-        track_color = QColor("#22272e") if is_dark else QColor("#e5e7eb")
-        border_color = QColor("#374151") if is_dark else QColor("#d1d5db")
+        track_color = option.palette.base().color()
+        border_color = option.palette.mid().color()
+        text_color = option.palette.text().color()
+        highlighted_text_color = option.palette.highlightedText().color()
+        highlight_color = option.palette.highlight().color()
 
         # Accent color depending on status
         if "fail" in status_str or "err" in status_str or "skip" in status_str:
@@ -65,10 +65,10 @@ class ProgressBarDelegate(QStyledItemDelegate):
             fill_color = QColor("#16a34a")  # Green
             label_text = "✓ Done"
         elif percent > 0:
-            fill_color = QColor("#2563eb")  # Blue
+            fill_color = highlight_color
             label_text = f"{percent}%"
         else:
-            fill_color = QColor("#475569")  # Muted slate
+            fill_color = option.palette.mid().color()
             label_text = "Queued"
 
         # Calculate bounding box with padding
@@ -102,13 +102,17 @@ class ProgressBarDelegate(QStyledItemDelegate):
 
         # Draw centered text label
         font = QFont(option.font)
-        font.setPointSize(max(8, font.pointSize() - 1))
-        font.setBold(True)
+        point_size = font.pointSize()
+        if point_size <= 0:
+            point_size = 10
+        font.setPointSize(max(9, min(11, point_size)))
+        try:
+            font.setWeight(QFont.Weight.DemiBold)
+        except AttributeError:
+            font.setWeight(QFont.DemiBold)
         painter.setFont(font)
 
-        text_color = QColor("#ffffff") if (is_dark or percent > 30) else QColor("#1f2937")
-        painter.setPen(text_color)
+        painter.setPen(highlighted_text_color if percent > 30 or is_dark else text_color)
         painter.drawText(bar_rect, Qt.AlignmentFlag.AlignCenter, label_text)
 
         painter.restore()
-

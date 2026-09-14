@@ -92,7 +92,7 @@
              <string>Search</string>
             </property>
             <property name="styleSheet">
-             <string notr="true">font-weight: bold; background-color: #2b5b84; color: white; padding: 5px 14px;</string>
+             <string notr="true">font-weight: 600; padding: 5px 14px;</string>
             </property>
            </widget>
           </item>
@@ -105,7 +105,7 @@
              <string>Stop Search</string>
             </property>
             <property name="styleSheet">
-             <string notr="true">font-weight: bold; background-color: #8c2a2a; color: white; padding: 5px 14px;</string>
+             <string notr="true">font-weight: 600; padding: 5px 14px;</string>
             </property>
            </widget>
           </item>
@@ -143,7 +143,7 @@
            <bool>false</bool>
           </property>
           <property name="styleSheet">
-           <string notr="true">#advanced_filters_widget { background-color: #1a202c; border: 1px solid #2d3748; border-radius: 6px; padding: 4px; }</string>
+           <string notr="true">#advanced_filters_widget { background: palette(base); border: 1px solid palette(mid); border-radius: 6px; padding: 4px; }</string>
           </property>
           <layout class="QVBoxLayout" name="adv_vlayout">
            <property name="leftMargin">
@@ -410,7 +410,7 @@
            <bool>false</bool>
           </property>
           <property name="styleSheet">
-           <string notr="true">background-color: #1f2937; border: 1px solid #374151; border-radius: 5px; color: #f3f4f6;</string>
+           <string notr="true">background: palette(base); border: 1px solid palette(mid); border-radius: 5px; color: palette(text);</string>
           </property>
           <layout class="QHBoxLayout" name="queue_bar_layout">
            <property name="leftMargin">
@@ -435,7 +435,7 @@
            <item>
             <widget class="QPushButton" name="start_queue_search_btn">
              <property name="styleSheet">
-              <string notr="true">font-weight: bold; background-color: #238636; color: white; padding: 5px 14px;</string>
+              <string notr="true">font-weight: 600; padding: 5px 14px;</string>
              </property>
              <property name="text">
               <string>▶ Search All Records (Max 2/book)</string>
@@ -448,7 +448,7 @@
               <bool>false</bool>
              </property>
              <property name="styleSheet">
-              <string notr="true">font-weight: bold; background-color: #8c2a2a; color: white; padding: 5px 14px;</string>
+              <string notr="true">font-weight: 600; padding: 5px 14px;</string>
              </property>
              <property name="text">
               <string>Stop Queue Search</string>
@@ -491,7 +491,7 @@
             <item>
              <widget class="QLabel" name="search_mirror_label">
               <property name="styleSheet">
-               <string notr="true">font-weight: bold; color: #2b5b84;</string>
+               <string notr="true">font-weight: 600; color: palette(highlight);</string>
               </property>
               <property name="text">
                <string>Search status: Ready</string>
@@ -510,7 +510,7 @@
                </size>
               </property>
               <property name="styleSheet">
-               <string notr="true">QProgressBar { border: 1px solid #374151; border-radius: 4px; background-color: #1f2937; text-align: center; font-size: 10px; font-weight: bold; color: #f3f4f6; } QProgressBar::chunk { background-color: #2563eb; border-radius: 3px; }</string>
+               <string notr="true">QProgressBar { border: 1px solid palette(mid); border-radius: 4px; background: palette(base); text-align: center; font-size: 11px; font-weight: 600; color: palette(text); } QProgressBar::chunk { background: palette(highlight); border-radius: 3px; }</string>
               </property>
              </widget>
             </item>
@@ -575,6 +575,13 @@
              <widget class="QPushButton" name="deselect_all_btn">
               <property name="text">
                <string>Deselect All</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="discard_selected_results_btn">
+              <property name="text">
+               <string>Discard Selected</string>
               </property>
              </widget>
             </item>
@@ -653,7 +660,7 @@
              </size>
             </property>
             <property name="styleSheet">
-             <string notr="true">QProgressBar { border: 1px solid #374151; border-radius: 4px; background-color: #1f2937; text-align: center; font-size: 11px; font-weight: bold; color: #f3f4f6; } QProgressBar::chunk { background-color: #2563eb; border-radius: 3px; }</string>
+             <string notr="true">QProgressBar { border: 1px solid palette(mid); border-radius: 4px; background: palette(base); text-align: center; font-size: 11px; font-weight: 600; color: palette(text); } QProgressBar::chunk { background: palette(highlight); border-radius: 3px; }</string>
             </property>
             <property name="format">
              <string>Bulk Download: Ready (0/0)</string>
@@ -710,7 +717,7 @@
                <cursorShape>PointingHandCursor</cursorShape>
               </property>
               <property name="styleSheet">
-               <string notr="true">text-align: left; font-weight: bold; color: #9ca3af; font-size: 11px; padding: 2px;</string>
+               <string notr="true">text-align: left; font-weight: 600; color: palette(text); font-size: 11px; padding: 2px;</string>
               </property>
               <property name="text">
                <string>▶ Live Activity Log</string>
@@ -747,7 +754,7 @@
              </size>
             </property>
             <property name="styleSheet">
-             <string notr="true">background-color: #181818; color: #4af626; font-family: monospace; font-size: 11px; padding: 6px; border: 1px solid #333; border-radius: 4px;</string>
+             <string notr="true">background: palette(base); color: palette(text); font-family: monospace; font-size: 11px; padding: 6px; border: 1px solid palette(mid); border-radius: 4px;</string>
             </property>
             <property name="readOnly">
              <bool>true</bool>
@@ -846,7 +853,7 @@
                <bool>false</bool>
               </property>
               <property name="styleSheet">
-               <string notr="true">font-weight: bold; background-color: #8c2a2a; color: white; padding: 5px 14px;</string>
+               <string notr="true">font-weight: 600; padding: 5px 14px;</string>
               </property>
               <property name="text">
                <string>Stop Download</string>
@@ -856,7 +863,7 @@
             <item>
              <widget class="QPushButton" name="start_download_btn">
               <property name="styleSheet">
-               <string notr="true">font-weight: bold; background-color: #2b5b84; color: white; padding: 5px 14px;</string>
+               <string notr="true">font-weight: 600; padding: 5px 14px;</string>
               </property>
               <property name="text">
                <string>Start Bulk Download</string>
@@ -938,7 +945,7 @@
             <item>
              <widget class="QPushButton" name="discard_dead_btn">
               <property name="styleSheet">
-               <string notr="true">font-weight: bold; color: #ff8080;</string>
+               <string notr="true">font-weight: 600; padding: 4px 10px;</string>
               </property>
               <property name="toolTip">
                <string>Remove mirrors that failed latency/bandwidth tests from your configured mirrors</string>
@@ -1008,7 +1015,7 @@
            </size>
           </property>
           <property name="styleSheet">
-           <string notr="true">font-family: monospace; font-weight: bold; font-size: 13px; color: #d35400;</string>
+           <string notr="true">font-family: monospace; font-weight: 600; font-size: 13px; color: palette(text);</string>
           </property>
           <property name="text">
            <string>(=^.^=)zZ</string>
@@ -1076,7 +1083,7 @@
          </size>
         </property>
         <property name="styleSheet">
-         <string notr="true">background-color: #1e1e1e; border: 1px solid #444; color: #888;</string>
+         <string notr="true">background: palette(base); border: 1px solid palette(mid); color: palette(text);</string>
         </property>
         <property name="text">
          <string>No Selection</string>
@@ -1102,7 +1109,7 @@
          </size>
         </property>
         <property name="styleSheet">
-         <string notr="true">background-color: #1e1e1e; color: #a5d6ff; font-family: monospace; font-size: 11px;</string>
+         <string notr="true">background: palette(base); color: palette(text); font-family: monospace; font-size: 11px;</string>
         </property>
         <property name="readOnly">
          <bool>true</bool>
@@ -1117,4 +1124,3 @@
  <resources/>
  <connections/>
 </ui>
-
