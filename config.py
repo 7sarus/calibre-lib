@@ -26,7 +26,7 @@ from qt.core import (
 # Plugin Version definitions
 PLUGIN_VERSION = (1, 10, 0, "b")
 _BASE_VERSION_STR = "v1.10b"
-_BUILD_COMMIT = "50"
+_BUILD_COMMIT = "51"
 
 
 def _resolve_version_str():
@@ -79,6 +79,9 @@ prefs.defaults["save_search_history"] = False
 prefs.defaults["max_search_history"] = 50
 prefs.defaults["max_download_history"] = 50
 prefs.defaults["history_retention_days"] = 30
+prefs.defaults["pending_searches"] = []
+prefs.defaults["hardcover_token"] = ""
+prefs.defaults["hardcover_match_mode"] = "ISBN Only"
 
 SEARCH_FIELDS = {
     "All Fields": "",
@@ -428,6 +431,43 @@ def cleanup_expired_history():
     d_filtered = [e for e in d_entries if e.get("timestamp", now) >= cutoff]
     if len(d_filtered) != len(d_entries):
         _save_download_history_raw(d_filtered)
+
+
+def get_pending_searches():
+    """Returns list of pending/failed (zero-result) search queries."""
+    pending = prefs.get("pending_searches", [])
+    if isinstance(pending, list):
+        return [p.strip() for p in pending if p and isinstance(p, str) and p.strip()]
+    return []
+
+
+def add_pending_search(query):
+    """Appends query to pending searches list if not already present."""
+    if not query or not query.strip():
+        return
+    query = query.strip()
+    pending = get_pending_searches()
+    if query not in pending:
+        pending.insert(0, query)  # Most recent first
+        # Keep up to 100 pending searches
+        pending = pending[:100]
+        prefs["pending_searches"] = pending
+
+
+def remove_pending_search(query):
+    """Removes query from pending searches list."""
+    if not query:
+        return
+    query = query.strip()
+    pending = get_pending_searches()
+    if query in pending:
+        pending = [p for p in pending if p != query]
+        prefs["pending_searches"] = pending
+
+
+def clear_pending_searches():
+    """Wipes all pending searches."""
+    prefs["pending_searches"] = []
 
 
 SUPPORTED_LANGUAGES = [

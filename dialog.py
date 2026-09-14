@@ -45,6 +45,9 @@ from qt.core import (
     QStandardItemModel,
     QCompleter,
     QFormLayout,
+    QByteArray,
+    QRadioButton,
+    QButtonGroup,
 )
 
 
@@ -70,8 +73,23 @@ from calibre_plugins.libgen_store.config import (
     clear_download_history,
     clear_all_history,
     cleanup_expired_history,
+    get_pending_searches,
+    add_pending_search,
+    remove_pending_search,
+    clear_pending_searches,
 )
 from calibre_plugins.libgen_store.scraper import LibgenScraper, LibgenBook
+
+try:
+    from calibre_plugins.libgen_store.hardcover import (
+        fetch_user_shelves_and_lists,
+        fetch_shelf_books,
+    )
+except ImportError:
+    try:
+        from hardcover import fetch_user_shelves_and_lists, fetch_shelf_books
+    except ImportError:
+        pass
 
 
 def serialize_book(book):
@@ -601,6 +619,279 @@ class HistorySettingsDialog(QDialog):
         self.accept()
 
 
+class HardcoverShelfDialog(QDialog):
+    """Dialog to fetch user bookshelves/lists from Hardcover.app and populate the bulk download queue."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_dialog = parent
+        self.setWindowTitle("Hardcover Shelf & List Downloader")
+        self.resize(780, 520)
+        self.layout = QVBoxLayout(self)
+
+        self.fetched_books = []
+        self.shelves_data = []
+
+        # Top section: Token & Shelves
+        top_group = QGroupBox("Hardcover Authentication & Shelf Selection")
+        top_layout = QVBoxLayout(top_group)
+
+        token_row = QHBoxLayout()
+        token_row.addWidget(QLabel("Hardcover API Token:"))
+        self.token_edit = QLineEdit(self)
+        self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.token_edit.setText(prefs.get("hardcover_token", ""))
+        self.token_edit.setPlaceholderText("Paste token from https://hardcover.app/account/api")
+        token_row.addWidget(self.token_edit, stretch=2)
+
+        self.fetch_shelves_btn = QPushButton("Fetch Shelves", self)
+        self.fetch_shelves_btn.setStyleSheet("font-weight: bold;")
+        self.fetch_shelves_btn.clicked.connect(self.on_fetch_shelves)
+        token_row.addWidget(self.fetch_shelves_btn)
+        top_layout.addLayout(token_row)
+
+        shelf_row = QHBoxLayout()
+        shelf_row.addWidget(QLabel("Select Shelf / List:"))
+        self.shelf_combo = QComboBox(self)
+        self.shelf_combo.addItem("Click 'Fetch Shelves' to load...")
+        self.shelf_combo.currentIndexChanged.connect(self.on_shelf_selected)
+        shelf_row.addWidget(self.shelf_combo, stretch=2)
+
+        self.load_books_btn = QPushButton("Load Books", self)
+        self.load_books_btn.clicked.connect(self.on_load_books)
+        shelf_row.addWidget(self.load_books_btn)
+        top_layout.addLayout(shelf_row)
+
+        # Matching mode
+        match_group = QGroupBox("Queue Matching Mode")
+        match_layout = QHBoxLayout(match_group)
+        self.mode_btn_group = QButtonGroup(self)
+
+        self.isbn_mode_radio = QRadioButton("Match by ISBN Only (Strict - use ISBN column only to query LibGen)")
+        self.text_mode_radio = QRadioButton("Match by Author & Title (Search LibGen using book title & author)")
+        self.mode_btn_group.addButton(self.isbn_mode_radio)
+        self.mode_btn_group.addButton(self.text_mode_radio)
+
+        saved_mode = prefs.get("hardcover_match_mode", "ISBN Only")
+        if saved_mode == "ISBN Only":
+            self.isbn_mode_radio.setChecked(True)
+        else:
+            self.text_mode_radio.setChecked(True)
+
+        self.isbn_mode_radio.toggled.connect(self.on_mode_changed)
+        match_layout.addWidget(self.isbn_mode_radio)
+        match_layout.addWidget(self.text_mode_radio)
+        top_layout.addWidget(match_group)
+
+        self.layout.addWidget(top_group)
+
+        # Books Table
+        self.books_table = QTableWidget(self)
+        self.books_table.setColumnCount(5)
+        self.books_table.setHorizontalHeaderLabels([
+            "Title", "Author", "ISBN", "Year", "Status"
+        ])
+        self.books_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self.books_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        self.books_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        self.books_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        self.books_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        self.books_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.layout.addWidget(self.books_table)
+
+        # Bottom buttons
+        btn_row = QHBoxLayout()
+        self.select_all_btn = QPushButton("Select All", self)
+        self.select_all_btn.clicked.connect(self.select_all_books)
+        btn_row.addWidget(self.select_all_btn)
+
+        self.deselect_all_btn = QPushButton("Deselect All", self)
+        self.deselect_all_btn.clicked.connect(self.deselect_all_books)
+        btn_row.addWidget(self.deselect_all_btn)
+
+        btn_row.addStretch()
+
+        self.queue_btn = QPushButton("Add Selected to Download Queue", self)
+        self.queue_btn.setStyleSheet("font-weight: bold; background-color: #2b5b84; color: white; padding: 6px 14px;")
+        self.queue_btn.clicked.connect(self.on_queue_selected)
+        btn_row.addWidget(self.queue_btn)
+
+        self.close_btn = QPushButton("Close", self)
+        self.close_btn.clicked.connect(self.reject)
+        btn_row.addWidget(self.close_btn)
+
+        self.layout.addLayout(btn_row)
+
+        # Auto-fetch if token exists
+        if self.token_edit.text().strip():
+            QTimer.singleShot(200, self.on_fetch_shelves)
+
+    def on_mode_changed(self):
+        mode = "ISBN Only" if self.isbn_mode_radio.isChecked() else "Author & Title"
+        prefs["hardcover_match_mode"] = mode
+
+    def on_fetch_shelves(self):
+        token = self.token_edit.text().strip()
+        if not token:
+            QMessageBox.warning(self, "Token Required", "Please enter your Hardcover API token.")
+            return
+
+        prefs["hardcover_token"] = token
+        self.fetch_shelves_btn.setEnabled(False)
+        self.fetch_shelves_btn.setText("Fetching...")
+
+        try:
+            data = fetch_user_shelves_and_lists(token)
+            self.shelves_data = []
+            self.shelf_combo.clear()
+
+            for s in data.get("shelves", []):
+                self.shelves_data.append(s)
+                self.shelf_combo.addItem(f"📁 Shelf: {s['name']}", s)
+
+            for l in data.get("lists", []):
+                self.shelves_data.append(l)
+                cnt = l.get("books_count", 0)
+                self.shelf_combo.addItem(f"📋 List: {l['name']} ({cnt} books)", l)
+
+            self.fetch_shelves_btn.setText("✓ Connected")
+            self.fetch_shelves_btn.setEnabled(True)
+            self.on_load_books()
+        except Exception as e:
+            self.fetch_shelves_btn.setText("Fetch Shelves")
+            self.fetch_shelves_btn.setEnabled(True)
+            QMessageBox.critical(self, "Hardcover Error", f"Failed to fetch shelves:\n{e}")
+
+    def on_shelf_selected(self, idx):
+        if idx >= 0:
+            self.on_load_books()
+
+    def on_load_books(self):
+        token = self.token_edit.text().strip()
+        if not token or self.shelf_combo.currentIndex() < 0:
+            return
+
+        current_item = self.shelf_combo.currentData()
+        if not current_item or not isinstance(current_item, dict):
+            return
+
+        shelf_type = current_item.get("type", "status")
+        target_id = current_item.get("id", 1)
+
+        self.load_books_btn.setEnabled(False)
+        self.load_books_btn.setText("Loading...")
+
+        try:
+            books = fetch_shelf_books(token, shelf_type=shelf_type, target_id=target_id)
+            self.fetched_books = books
+            self.populate_books_table()
+            self.load_books_btn.setText("Load Books")
+            self.load_books_btn.setEnabled(True)
+        except Exception as e:
+            self.load_books_btn.setText("Load Books")
+            self.load_books_btn.setEnabled(True)
+            QMessageBox.warning(self, "Load Error", f"Could not load books for shelf:\n{e}")
+
+    def populate_books_table(self):
+        self.books_table.setRowCount(len(self.fetched_books))
+        for row, b in enumerate(self.fetched_books):
+            self.books_table.setItem(row, 0, QTableWidgetItem(b.get("title", "")))
+            self.books_table.setItem(row, 1, QTableWidgetItem(b.get("author", "")))
+            isbn = b.get("best_isbn") or b.get("isbn_13") or b.get("isbn_10") or ""
+            isbn_item = QTableWidgetItem(isbn if isbn else "—")
+            if not isbn:
+                isbn_item.setForeground(QColor("#777"))
+            self.books_table.setItem(row, 2, isbn_item)
+            self.books_table.setItem(row, 3, QTableWidgetItem(str(b.get("release_year") or "")))
+            self.books_table.setItem(row, 4, QTableWidgetItem("Ready"))
+        self.books_table.selectAll()
+
+    def select_all_books(self):
+        self.books_table.selectAll()
+
+    def deselect_all_books(self):
+        self.books_table.clearSelection()
+
+    def on_queue_selected(self):
+        selected_rows = sorted(set(idx.row() for idx in self.books_table.selectedIndexes()))
+        if not selected_rows:
+            QMessageBox.information(self, "No Selection", "Please select at least one book from the table.")
+            return
+
+        is_isbn_mode = self.isbn_mode_radio.isChecked()
+        scraper = LibgenScraper(mirrors=get_mirrors(), timeout=int(prefs.get("timeout", 20)))
+
+        added_cnt = 0
+        failed_cnt = 0
+        skipped_no_isbn = 0
+
+        self.queue_btn.setEnabled(False)
+        self.queue_btn.setText("Searching & Queuing...")
+        QApplication.processEvents()
+
+        for r in selected_rows:
+            if r >= len(self.fetched_books):
+                continue
+            b = self.fetched_books[r]
+            title = b.get("title", "")
+            author = b.get("author", "")
+            isbn = b.get("best_isbn") or b.get("isbn_13") or b.get("isbn_10") or ""
+
+            if is_isbn_mode:
+                if not isbn:
+                    skipped_no_isbn += 1
+                    self.books_table.setItem(r, 4, QTableWidgetItem("Skipped (No ISBN)"))
+                    continue
+                query = isbn
+                search_field = "i"
+            else:
+                query = f"{title} {author}".strip()
+                search_field = ""
+
+            self.books_table.setItem(r, 4, QTableWidgetItem("Searching..."))
+            QApplication.processEvents()
+
+            try:
+                results = scraper.search(query=query, search_field=search_field, max_results=2)
+            except Exception:
+                results = []
+
+            if results:
+                top_match = results[0]
+                if self.parent_dialog and hasattr(self.parent_dialog, "queue_items"):
+                    existing = any(
+                        q.get("book") and getattr(q["book"], "detail_url", None) == top_match.detail_url
+                        for q in self.parent_dialog.queue_items
+                    )
+                    if not existing:
+                        self.parent_dialog.queue_items.append({
+                            "book": top_match,
+                            "status": "Queued",
+                        })
+                        added_cnt += 1
+                self.books_table.setItem(r, 4, QTableWidgetItem("✓ Queued"))
+            else:
+                failed_cnt += 1
+                add_pending_search(query)
+                self.books_table.setItem(r, 4, QTableWidgetItem("Not Found (Added to Pending)"))
+                if self.parent_dialog and hasattr(self.parent_dialog, "update_pending_combo"):
+                    self.parent_dialog.update_pending_combo()
+
+        self.queue_btn.setText("Add Selected to Download Queue")
+        self.queue_btn.setEnabled(True)
+
+        if self.parent_dialog and hasattr(self.parent_dialog, "update_queue_table"):
+            self.parent_dialog.update_queue_table()
+            self.parent_dialog.tabs.setCurrentIndex(1)
+
+        summary_msg = f"Hardcover Shelf Import Complete:\n\n• Successfully queued: {added_cnt} book(s)\n• Zero results (added to Pending Searches): {failed_cnt} book(s)"
+        if skipped_no_isbn > 0:
+            summary_msg += f"\n• Skipped (no ISBN present in Hardcover record): {skipped_no_isbn} book(s)"
+
+        QMessageBox.information(self, "Hardcover Queue Import", summary_msg)
+        self.accept()
+
+
 class ReviewImportDialog(QDialog):
     """Review modal presented after download completion or abortion to select books for Calibre import."""
 
@@ -722,9 +1013,10 @@ class ReviewImportDialog(QDialog):
 
 
 class LibgenDialog(QDialog):
-    def __init__(self, gui, parent=None):
+    def __init__(self, gui, initial_query=None, parent=None):
         super().__init__(parent or gui)
         self.gui = gui
+        self.initial_query = initial_query
         self.setWindowTitle(f"LibGen Downloader ({PLUGIN_VERSION_STR})")
         saved_w = int(prefs.get("dialog_width", 1020))
         saved_h = int(prefs.get("dialog_height", 620))
@@ -799,7 +1091,23 @@ class LibgenDialog(QDialog):
         row1.addWidget(QLabel("Search:"))
         self.search_input = QLineEdit(self)
         self.search_input.returnPressed.connect(self.start_search)
+        if self.initial_query:
+            self.search_input.setText(self.initial_query)
+            self.search_input.selectAll()
         row1.addWidget(self.search_input, stretch=3)
+
+        # Pending / Zero-Result Searches Dropdown
+        row1.addWidget(QLabel("Pending:"))
+        self.pending_combo = QComboBox(self)
+        self.pending_combo.setToolTip("Select a failed or zero-result search to retry")
+        self.pending_combo.currentIndexChanged.connect(self.on_pending_selected)
+        row1.addWidget(self.pending_combo, stretch=1)
+
+        self.pending_clear_btn = QPushButton("✕", self)
+        self.pending_clear_btn.setToolTip("Remove selected pending search query")
+        self.pending_clear_btn.setFixedWidth(24)
+        self.pending_clear_btn.clicked.connect(self.remove_selected_pending)
+        row1.addWidget(self.pending_clear_btn)
 
         row1.addWidget(QLabel("Field:"))
         self.field_combo = QComboBox(self)
@@ -900,6 +1208,12 @@ class LibgenDialog(QDialog):
         self.history_settings_btn.setFixedWidth(28)
         self.history_settings_btn.clicked.connect(self.open_history_settings)
         row2.addWidget(self.history_settings_btn)
+
+        self.hardcover_btn = QPushButton("📚 Hardcover", self)
+        self.hardcover_btn.setToolTip("Import and queue books from your Hardcover.app shelves / lists")
+        self.hardcover_btn.setStyleSheet("font-weight: bold;")
+        self.hardcover_btn.clicked.connect(self.open_hardcover_dialog)
+        row2.addWidget(self.hardcover_btn)
         
         row2.addStretch(1)
 
@@ -1160,6 +1474,73 @@ class LibgenDialog(QDialog):
         status_bar.addWidget(self.version_badge)
 
         main_layout.addLayout(status_bar)
+
+        self.restore_header_states()
+        self.update_pending_combo()
+
+    def update_pending_combo(self):
+        if not hasattr(self, "pending_combo"):
+            return
+        pending = get_pending_searches()
+        self.pending_combo.blockSignals(True)
+        self.pending_combo.clear()
+        if not pending:
+            self.pending_combo.addItem("None (0)")
+            self.pending_combo.setEnabled(False)
+            if hasattr(self, "pending_clear_btn"):
+                self.pending_clear_btn.setEnabled(False)
+        else:
+            self.pending_combo.addItem(f"Pending ({len(pending)})...", None)
+            for p in pending:
+                self.pending_combo.addItem(p, p)
+            self.pending_combo.setEnabled(True)
+            if hasattr(self, "pending_clear_btn"):
+                self.pending_clear_btn.setEnabled(True)
+        self.pending_combo.blockSignals(False)
+
+    def on_pending_selected(self, idx):
+        if idx <= 0:
+            return
+        query = self.pending_combo.currentData()
+        if query:
+            self.search_input.setText(query)
+            self.search_input.selectAll()
+
+    def remove_selected_pending(self):
+        idx = self.pending_combo.currentIndex()
+        if idx > 0:
+            query = self.pending_combo.currentData()
+            if query:
+                remove_pending_search(query)
+                self.update_pending_combo()
+
+    def open_hardcover_dialog(self):
+        dlg = HardcoverShelfDialog(self)
+        dlg.exec()
+
+    def save_header_states(self):
+        try:
+            if hasattr(self, "results_table"):
+                prefs["results_table_header"] = bytes(self.results_table.horizontalHeader().saveState().toHex()).decode("ascii")
+            if hasattr(self, "queue_table"):
+                prefs["queue_table_header"] = bytes(self.queue_table.horizontalHeader().saveState().toHex()).decode("ascii")
+            if hasattr(self, "mirrors_table"):
+                prefs["mirrors_table_header"] = bytes(self.mirrors_table.horizontalHeader().saveState().toHex()).decode("ascii")
+        except Exception as e:
+            print(f"[LibGen Plugin] Failed to save header states: {e}")
+
+    def restore_header_states(self):
+        try:
+            for key, table in [
+                ("results_table_header", getattr(self, "results_table", None)),
+                ("queue_table_header", getattr(self, "queue_table", None)),
+                ("mirrors_table_header", getattr(self, "mirrors_table", None)),
+            ]:
+                if table and prefs.get(key):
+                    state_hex = prefs.get(key)
+                    table.horizontalHeader().restoreState(QByteArray.fromHex(state_hex.encode("ascii")))
+        except Exception as e:
+            print(f"[LibGen Plugin] Failed to restore header states: {e}")
 
     def _reset_version_clicks(self):
         self.version_click_count = 0
@@ -1494,14 +1875,27 @@ class LibgenDialog(QDialog):
         self.tabs.setCurrentIndex(0)
         self.populate_results_table()
 
+        query = self.search_input.text().strip()
+        if not books and query:
+            add_pending_search(query)
+            self.update_pending_combo()
+        elif books and query:
+            remove_pending_search(query)
+            self.update_pending_combo()
+
     def on_search_error(self, err_msg):
         self.search_btn.setVisible(True)
         self.search_btn.setEnabled(True)
         self.stop_search_btn.setVisible(False)
 
-
         self.status_label.setText(f"Search failed: {err_msg}")
         self.search_mirror_label.setText(f"Search failed: {err_msg}")
+
+        query = self.search_input.text().strip()
+        if query:
+            add_pending_search(query)
+            self.update_pending_combo()
+
         QMessageBox.warning(self, "Search Error", f"Failed to search LibGen mirrors:\n{err_msg}")
 
     def populate_results_table(self):
@@ -2402,6 +2796,7 @@ class LibgenDialog(QDialog):
 
     def closeEvent(self, event):
         self._do_save_all_field_preferences()
+        self.save_header_states()
         if hasattr(self, "search_worker") and self.search_worker and self.search_worker.isRunning():
             self.search_worker.abort()
         if self.download_worker and self.download_worker.isRunning():
