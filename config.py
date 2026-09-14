@@ -30,7 +30,7 @@ from qt.core import (
 # Plugin Version definitions
 PLUGIN_VERSION = (1, 11, 0, "b")
 _BASE_VERSION_STR = "v1.11b"
-_BUILD_COMMIT = "69"
+_BUILD_COMMIT = "70"
 
 
 def _resolve_version_str():
@@ -98,7 +98,8 @@ prefs.defaults["mirror_success_counts"] = {}
 prefs.defaults["mirror_latencies"] = {}
 prefs.defaults["max_results"] = 5
 prefs.defaults["search_timeout"] = 8
-prefs.defaults["show_download_stats"] = True
+prefs.defaults["show_download_stats"] = False
+prefs.defaults["show_cats"] = False
 prefs.defaults["fastest_cdns"] = {}
 prefs.defaults["unique_results"] = True
 prefs.defaults["fast_mode"] = False

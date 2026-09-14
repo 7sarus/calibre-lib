@@ -8,6 +8,13 @@ updated: 2026-09-15
 
 ## 2026-09-15
 
+- id: search-queue-deferral-and-hide-cats
+  type: feat
+  files: [dialog.py, config.py]
+  summary: Implemented two-pass bulk queue search deferring slow/failing records to the tail. Defaulted cats and download stats to hidden; toggleable via 3x click on version badge.
+  why: User requested faster bulk search with deferral of difficult items and hiding cats/stats by default with 3x click toggle.
+  validation: 9/9 unit tests pass
+
 - id: ui-hardcover-token-size
   type: fix
   files: [dialog.py, config.py]

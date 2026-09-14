@@ -379,8 +379,7 @@ class SearchQueueWorker(QThread):
         all_results = []
         matched_records = 0
         failed_records = 0
-        total = len(self.records)
-        top_mirrors = [m for m in self.mirrors[:3] if m]
+        top_mirrors = [m for m in self.mirrors[:5] if m]
         if self.selected_mirror and self.selected_mirror != "Auto":
             top_mirrors = [self.selected_mirror]
         if not top_mirrors:
@@ -388,7 +387,18 @@ class SearchQueueWorker(QThread):
         results_lock = threading.Lock()
         completed = [0]
 
-        def search_record(record_index, rec):
+        # Fast first-pass timeout (5s); retry pass timeout (10s)
+        fast_timeout = min(5, max(3, self.timeout // 2))
+        retry_timeout = min(10, max(5, self.timeout))
+
+        # Two passes:
+        # Pass 1: Quick attempt across all records. Any that timeout or fail are deferred.
+        # Pass 2: Deferred entries are retried at the very end of the list.
+        pending_queue = collections.deque(list(enumerate(self.records, 1)))
+        deferred_records = []
+        total = len(self.records)
+
+        def search_record(record_index, rec, timeout_sec, is_deferred=False):
             if self._is_aborted:
                 return False, rec, []
 
@@ -397,15 +407,16 @@ class SearchQueueWorker(QThread):
             isbn = rec.get("isbn", "")
             assigned_mirror = top_mirrors[(record_index - 1) % len(top_mirrors)]
             mirror_order = [assigned_mirror] + [m for m in self.mirrors if m.rstrip("/") != assigned_mirror.rstrip("/")]
-            scraper = LibgenScraper(mirrors=mirror_order, timeout=self.timeout)
+            scraper = LibgenScraper(mirrors=mirror_order, timeout=timeout_sec)
 
             label = f"{title} - {author}".strip(" -") or isbn or f"Record #{record_index}"
             host = urlparse(assigned_mirror).netloc or assigned_mirror
+            tag = " [Deferred Retry]" if is_deferred else ""
             self.progress_signal.emit(
                 completed[0] + 1,
                 total,
                 label,
-                f"Lane {((record_index - 1) % len(top_mirrors)) + 1}: querying {host} for '{label}' (max 2)...",
+                f"Lane {((record_index - 1) % len(top_mirrors)) + 1}: querying {host} for '{label}'{tag} (max 2)...",
             )
 
             results = []
@@ -449,29 +460,33 @@ class SearchQueueWorker(QThread):
             results = results[:2] if results else []
             return bool(results), rec, results
 
-        indexed_records = list(enumerate(self.records, 1))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=min(3, max(1, len(indexed_records)))) as pool:
-            futures = [pool.submit(search_record, idx, rec) for idx, rec in indexed_records]
+        concurrency = min(5, max(2, len(self.records)))
+
+        # Pass 1: Fast queries
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as pool:
+            futures = {
+                pool.submit(search_record, idx, rec, fast_timeout, False): (idx, rec)
+                for idx, rec in pending_queue
+            }
             for fut in concurrent.futures.as_completed(futures):
                 if self._is_aborted:
                     break
+                idx, rec = futures[fut]
                 try:
                     has_results, rec, results = fut.result()
                 except Exception:
-                    has_results, rec, results = False, {}, []
-
-                with results_lock:
-                    completed[0] += 1
-                    done = completed[0]
+                    has_results, rec, results = False, rec, []
 
                 title = rec.get("title", "")
                 author = rec.get("author", "")
                 isbn = rec.get("isbn", "")
-                label = f"{title} - {author}".strip(" -") or isbn or f"Record #{done}"
+                label = f"{title} - {author}".strip(" -") or isbn or f"Record #{idx}"
 
                 if has_results:
-                    matched_records += 1
                     with results_lock:
+                        completed[0] += 1
+                        done = completed[0]
+                        matched_records += 1
                         for b in results:
                             setattr(b, "calibre_source", label)
                             if not any(getattr(existing, "detail_url", None) == b.detail_url for existing in all_results):
@@ -479,12 +494,51 @@ class SearchQueueWorker(QThread):
                     self.progress_signal.emit(done, total, label, f"✓ Found {len(results)} match(es)")
                     self.record_finished_signal.emit(rec, results)
                 else:
-                    failed_records += 1
-                    query_fallback = isbn or f"{title} {author}".strip()
-                    if query_fallback:
-                        add_pending_search(query_fallback)
-                    self.progress_signal.emit(done, total, label, "✗ 0 matches (saved to Pending)")
-                    self.record_finished_signal.emit(rec, [])
+                    # Difficult entry: defer to end of the list
+                    deferred_records.append((idx, rec))
+                    self.progress_signal.emit(completed[0], total, label, f"↷ Deferring '{label[:30]}' to end of queue...")
+
+        # Pass 2: Retry deferred entries at the end of the list with broader timeout
+        if deferred_records and not self._is_aborted:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(deferred_records))) as pool:
+                futures = {
+                    pool.submit(search_record, idx, rec, retry_timeout, True): (idx, rec)
+                    for idx, rec in deferred_records
+                }
+                for fut in concurrent.futures.as_completed(futures):
+                    if self._is_aborted:
+                        break
+                    idx, rec = futures[fut]
+                    try:
+                        has_results, rec, results = fut.result()
+                    except Exception:
+                        has_results, rec, results = False, rec, []
+
+                    with results_lock:
+                        completed[0] += 1
+                        done = completed[0]
+
+                    title = rec.get("title", "")
+                    author = rec.get("author", "")
+                    isbn = rec.get("isbn", "")
+                    label = f"{title} - {author}".strip(" -") or isbn or f"Record #{done}"
+
+                    if has_results:
+                        with results_lock:
+                            matched_records += 1
+                            for b in results:
+                                setattr(b, "calibre_source", label)
+                                if not any(getattr(existing, "detail_url", None) == b.detail_url for existing in all_results):
+                                    all_results.append(b)
+                        self.progress_signal.emit(done, total, label, f"✓ Found {len(results)} match(es) (deferred)")
+                        self.record_finished_signal.emit(rec, results)
+                    else:
+                        failed_records += 1
+                        query_fallback = isbn or f"{title} {author}".strip()
+                        if query_fallback:
+                            add_pending_search(query_fallback)
+                        self.progress_signal.emit(done, total, label, "✗ 0 matches (saved to Pending)")
+                        self.record_finished_signal.emit(rec, [])
 
         self.finished_signal.emit(all_results, matched_records, failed_records)
 
@@ -1460,8 +1514,9 @@ class LibgenDialog(QDialog):
         self._filter_timer.setInterval(200)
         self._filter_timer.timeout.connect(self.apply_queue_filter)
 
-        # Download stats toggle (toggled by triple-clicking version badge)
-        self.show_stats = bool(prefs.get("show_download_stats", True))
+        # Download stats and cats toggle (toggled by triple-clicking version badge)
+        self.show_stats = bool(prefs.get("show_download_stats", False))
+        self.show_cats = bool(prefs.get("show_cats", False))
         self.version_click_count = 0
         self.version_click_timer = QTimer(self)
         self.version_click_timer.setInterval(1200)
@@ -1501,6 +1556,7 @@ class LibgenDialog(QDialog):
             "color: palette(text); padding: 4px; background: palette(base); "
             "border: 1px solid palette(mid); border-radius: 4px;"
         )
+        self.side_neko_label.setVisible(self.show_cats)
         right_layout.addWidget(self.side_neko_label)
 
         right_layout.addWidget(QLabel("<b>Live Mirror Status</b>"))
@@ -2018,6 +2074,7 @@ class LibgenDialog(QDialog):
         self.neko_label.setFixedWidth(85)
         self.neko_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.neko_label.setStyleSheet("font-family: monospace; font-weight: 600; font-size: 13px; color: palette(text);")
+        self.neko_label.setVisible(self.show_cats)
         status_bar.addWidget(self.neko_label)
 
         self.neko_timer = QTimer(self)
@@ -2158,11 +2215,17 @@ class LibgenDialog(QDialog):
             self.version_click_count = 0
             self.version_click_timer.stop()
             self.show_stats = not self.show_stats
+            self.show_cats = self.show_stats
             prefs["show_download_stats"] = self.show_stats
+            prefs["show_cats"] = self.show_cats
             self._update_version_badge_style()
+            if hasattr(self, "neko_label"):
+                self.neko_label.setVisible(self.show_cats)
+            if hasattr(self, "side_neko_label"):
+                self.side_neko_label.setVisible(self.show_cats)
             status_msg = "enabled" if self.show_stats else "disabled"
-            self.status_label.setText(f"Download statistics {status_msg}.")
-            self.append_log(f"[CONFIG] Download statistics {status_msg} (toggled via version badge).")
+            self.status_label.setText(f"Cats and stats {status_msg}.")
+            self.append_log(f"[CONFIG] Cats and download stats {status_msg} (toggled via version badge).")
 
     def _update_version_badge_style(self):
         if not hasattr(self, "version_badge"):
@@ -2171,12 +2234,12 @@ class LibgenDialog(QDialog):
             self.version_badge.setStyleSheet(
                 "color: palette(highlight); font-size: 11px; padding: 2px 6px; background: palette(base); border: 1px solid palette(highlight); border-radius: 3px; font-weight: 600;"
             )
-            self.version_badge.setToolTip("Download statistics enabled (Click 3x to disable)")
+            self.version_badge.setToolTip("Cats & download statistics active (Click 3x to hide)")
         else:
             self.version_badge.setStyleSheet(
                 "color: palette(text); font-size: 11px; padding: 2px 6px; background: palette(base); border: 1px solid palette(mid); border-radius: 3px;"
             )
-            self.version_badge.setToolTip("Version info (Click 3x to toggle download statistics)")
+            self.version_badge.setToolTip("Version info (Click 3x to toggle cats & stats)")
 
     def manual_fetch_mirrors(self):
         self.fetch_mirrors_btn.setEnabled(False)
