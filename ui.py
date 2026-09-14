@@ -101,63 +101,71 @@ class LibgenAction(InterfaceAction):
 
     def get_selected_book_info(self):
         """Extracts title, authors, and isbn from the currently selected Calibre book record."""
+        books = self.get_selected_books_info()
+        return books[0] if books else None
+
+    def get_selected_books_info(self):
+        """Extracts title, authors, isbn, and book_id for all currently selected Calibre book records."""
+        books = []
         try:
             lv = getattr(self.gui, "library_view", None)
             if not lv:
-                return None
+                return books
 
             selected_ids = lv.get_selected_ids() if hasattr(lv, "get_selected_ids") else []
-            book_id = selected_ids[0] if selected_ids else lv.current_id()
-            if book_id is None:
-                idx = lv.currentIndex()
-                if idx.isValid() and hasattr(lv, "model") and lv.model():
-                    book_id = lv.model().id(idx.row())
-
-            if book_id is None:
-                return None
+            if not selected_ids:
+                cur_id = lv.current_id()
+                if cur_id is not None:
+                    selected_ids = [cur_id]
+                else:
+                    idx = lv.currentIndex()
+                    if idx.isValid() and hasattr(lv, "model") and lv.model():
+                        b_id = lv.model().id(idx.row())
+                        if b_id is not None:
+                            selected_ids = [b_id]
 
             db = getattr(self.gui, "current_db", None)
-            if not db:
-                return None
+            if not db or not selected_ids:
+                return books
 
-            title = ""
-            author_str = ""
-            isbn = ""
-
-            if hasattr(db, "new_api"):
-                try:
-                    title = db.new_api.field_for("title", book_id) or ""
-                except Exception:
-                    pass
-                try:
-                    authors = db.new_api.field_for("authors", book_id)
-                    if authors:
+            for book_id in selected_ids:
+                title = ""
+                author_str = ""
+                isbn = ""
+                if hasattr(db, "new_api"):
+                    try:
+                        title = (db.new_api.field_for("title", book_id) or "").strip()
+                    except Exception:
+                        pass
+                    try:
+                        authors = db.new_api.field_for("authors", book_id) or ()
                         author_str = ", ".join(a.strip() for a in authors if a and a.strip().lower() != "unknown")
-                except Exception:
-                    pass
-                try:
-                    identifiers = db.new_api.field_for("identifiers", book_id)
-                    if isinstance(identifiers, dict):
-                        isbn = identifiers.get("isbn") or identifiers.get("isbn13") or identifiers.get("isbn10") or ""
-                except Exception:
-                    pass
-            elif hasattr(db, "title") and hasattr(db, "authors"):
-                try:
-                    title = db.title(book_id) or ""
-                    author_str = db.authors(book_id) or ""
-                except Exception:
-                    pass
+                    except Exception:
+                        pass
+                    try:
+                        identifiers = db.new_api.field_for("identifiers", book_id) or {}
+                        if isinstance(identifiers, dict):
+                            raw_isbn = identifiers.get("isbn") or identifiers.get("isbn13") or identifiers.get("isbn10") or ""
+                            isbn = str(raw_isbn).strip()
+                    except Exception:
+                        pass
+                elif hasattr(db, "title") and hasattr(db, "authors"):
+                    try:
+                        title = (db.title(book_id) or "").strip()
+                        author_str = (db.authors(book_id) or "").strip()
+                    except Exception:
+                        pass
 
-            if title or author_str or isbn:
-                return {
-                    "book_id": book_id,
-                    "title": title.strip(),
-                    "author": author_str.strip(),
-                    "isbn": isbn.strip(),
-                }
+                if title or author_str or isbn:
+                    books.append({
+                        "book_id": book_id,
+                        "title": title,
+                        "author": author_str,
+                        "isbn": isbn,
+                    })
         except Exception as e:
-            print(f"[LibGen Plugin] Failed to resolve selected book info: {e}")
-        return None
+            print(f"[LibGen Plugin] Failed to resolve selected books info: {e}")
+        return books
 
     def update_author_context_menu(self):
         """Updates context menu action text and guarantees it remains active."""
@@ -185,11 +193,12 @@ class LibgenAction(InterfaceAction):
             self.search_author_action.setEnabled(True)
 
     def show_dialog(self):
-        book_info = self.get_selected_book_info()
+        selected_books = self.get_selected_books_info()
         initial_query = ""
-        if book_info:
-            t = book_info.get("title", "")
-            a = book_info.get("author", "")
+        if len(selected_books) == 1:
+            b = selected_books[0]
+            t = b.get("title", "")
+            a = b.get("author", "")
             if t and a:
                 initial_query = f"{t} {a}"
             elif t:
@@ -197,7 +206,7 @@ class LibgenAction(InterfaceAction):
             elif a:
                 initial_query = a
 
-        d = LibgenDialog(self.gui, initial_query=initial_query)
+        d = LibgenDialog(self.gui, initial_query=initial_query, selected_books=selected_books)
         d.exec()
 
 

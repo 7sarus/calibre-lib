@@ -285,6 +285,107 @@ class SearchWorker(QThread):
                 self.error_signal.emit(str(e))
 
 
+class SearchQueueWorker(QThread):
+    progress_signal = pyqtSignal(int, int, str, str)  # current_idx, total_records, label, status_msg
+    record_finished_signal = pyqtSignal(dict, list)   # record_info, matched_books
+    finished_signal = pyqtSignal(list, int, int)       # all_results, matched_records_cnt, failed_records_cnt
+
+    def __init__(self, records, mirrors, selected_mirror="Auto", timeout=20, language=None, fmt="Any", filter_mode="Prioritize", unique_results=True, parent=None):
+        super().__init__(parent)
+        self.records = list(records)
+        self.mirrors = list(mirrors)
+        self.selected_mirror = selected_mirror
+        self.timeout = timeout
+        self.language = language
+        self.fmt = fmt
+        self.filter_mode = filter_mode
+        self.unique_results = unique_results
+        self._is_aborted = False
+
+    def abort(self):
+        self._is_aborted = True
+
+    def run(self):
+        scraper = LibgenScraper(mirrors=self.mirrors, timeout=self.timeout)
+        all_results = []
+        matched_records = 0
+        failed_records = 0
+        total = len(self.records)
+
+        for idx, rec in enumerate(self.records, 1):
+            if self._is_aborted:
+                break
+
+            title = rec.get("title", "")
+            author = rec.get("author", "")
+            isbn = rec.get("isbn", "")
+
+            label = f"{title} - {author}".strip(" -") or isbn or f"Record #{idx}"
+            self.progress_signal.emit(idx, total, label, f"Querying mirrors for '{label}' (max 2)...")
+
+            results = []
+
+            # 1. Try ISBN if available (strictly max_results = 2)
+            if isbn:
+                try:
+                    results = scraper.search(
+                        query=isbn,
+                        search_field="i",
+                        selected_mirror=self.selected_mirror,
+                        max_results=2,
+                        preferred_language=self.language,
+                        preferred_format=self.fmt,
+                        filter_mode=self.filter_mode,
+                        unique_results=self.unique_results,
+                        abort_check=lambda: self._is_aborted,
+                    )
+                except Exception:
+                    results = []
+
+            # 2. Fallback to Title + Author if no ISBN results (strictly max_results = 2)
+            if not results and (title or author):
+                q = f"{title} {author}".strip()
+                try:
+                    results = scraper.search(
+                        query=q,
+                        search_field="",
+                        selected_mirror=self.selected_mirror,
+                        max_results=2,
+                        preferred_language=self.language,
+                        preferred_format=self.fmt,
+                        filter_mode=self.filter_mode,
+                        unique_results=self.unique_results,
+                        abort_check=lambda: self._is_aborted,
+                    )
+                except Exception:
+                    results = []
+
+            # Ensure hard limit of strictly max 2 results per record
+            results = results[:2] if results else []
+
+            if results:
+                matched_records += 1
+                for b in results:
+                    setattr(b, "calibre_source", label)
+                    if not any(getattr(existing, "detail_url", None) == b.detail_url for existing in all_results):
+                        all_results.append(b)
+                self.progress_signal.emit(idx, total, label, f"✓ Found {len(results)} match(es)")
+                self.record_finished_signal.emit(rec, results)
+            else:
+                failed_records += 1
+                query_fallback = isbn or f"{title} {author}".strip()
+                if query_fallback:
+                    add_pending_search(query_fallback)
+                self.progress_signal.emit(idx, total, label, "✗ 0 matches (saved to Pending)")
+                self.record_finished_signal.emit(rec, [])
+
+            # Gentle rate-limiting between queries to protect mirrors
+            if idx < total and not self._is_aborted:
+                time.sleep(1.0)
+
+        self.finished_signal.emit(all_results, matched_records, failed_records)
+
+
 class MirrorHealthWorker(QThread):
     mirror_tested = pyqtSignal(str, bool, int, float, str, str)  # url, is_ok, latency_ms, kb_s, speed_str, status_msg
     all_tested = pyqtSignal()
@@ -710,7 +811,20 @@ class HardcoverShelfDialog(QDialog):
         self.deselect_all_btn.clicked.connect(self.deselect_all_books)
         btn_row.addWidget(self.deselect_all_btn)
 
+        self.select_first_btn = QPushButton("Select First N", self)
+        self.select_first_btn.setToolTip("Select the top N books from the table based on queue limit")
+        self.select_first_btn.clicked.connect(self.select_first_n_books)
+        btn_row.addWidget(self.select_first_btn)
+
         btn_row.addStretch()
+
+        btn_row.addWidget(QLabel("Max to queue:"))
+        self.max_queue_spin = QSpinBox(self)
+        self.max_queue_spin.setRange(0, 500)
+        self.max_queue_spin.setValue(int(prefs.get("hardcover_max_queue_limit", 10)))
+        self.max_queue_spin.setToolTip("Maximum number of books to query and queue (0 = all selected)")
+        self.max_queue_spin.valueChanged.connect(lambda v: prefs.__setitem__("hardcover_max_queue_limit", v))
+        btn_row.addWidget(self.max_queue_spin)
 
         self.queue_btn = QPushButton("Add Selected to Download Queue", self)
         self.queue_btn.setStyleSheet("font-weight: bold; background-color: #2b5b84; color: white; padding: 6px 14px;")
@@ -813,11 +927,24 @@ class HardcoverShelfDialog(QDialog):
     def deselect_all_books(self):
         self.books_table.clearSelection()
 
+    def select_first_n_books(self):
+        n = self.max_queue_spin.value()
+        if n <= 0:
+            n = 10
+        self.books_table.clearSelection()
+        limit = min(n, self.books_table.rowCount())
+        for r in range(limit):
+            self.books_table.selectRow(r)
+
     def on_queue_selected(self):
         selected_rows = sorted(set(idx.row() for idx in self.books_table.selectedIndexes()))
         if not selected_rows:
             QMessageBox.information(self, "No Selection", "Please select at least one book from the table.")
             return
+
+        max_limit = self.max_queue_spin.value()
+        if max_limit > 0 and len(selected_rows) > max_limit:
+            selected_rows = selected_rows[:max_limit]
 
         is_isbn_mode = self.isbn_mode_radio.isChecked()
         scraper = LibgenScraper(mirrors=get_mirrors(), timeout=int(prefs.get("timeout", 20)))
@@ -1017,10 +1144,11 @@ class ReviewImportDialog(QDialog):
 
 
 class LibgenDialog(QDialog):
-    def __init__(self, gui, initial_query=None, parent=None):
+    def __init__(self, gui, initial_query=None, selected_books=None, parent=None):
         super().__init__(parent or gui)
         self.gui = gui
         self.initial_query = initial_query
+        self.selected_books = list(selected_books) if selected_books else []
         self.setWindowTitle(f"LibGen Downloader ({PLUGIN_VERSION_STR})")
         saved_w = int(prefs.get("dialog_width", 1020))
         saved_h = int(prefs.get("dialog_height", 620))
@@ -1031,6 +1159,7 @@ class LibgenDialog(QDialog):
         self.mirror_health = {}
         self.download_worker = None
         self.search_worker = None
+        self.search_queue_worker = None
         self.health_worker = None
         
         # Debounce timer for saving preferences
@@ -1223,6 +1352,40 @@ class LibgenDialog(QDialog):
 
         top_panel.addLayout(row1)
         top_panel.addLayout(row2)
+
+        # Batch Calibre Records Search Queue Bar (if books selected from Calibre)
+        self.search_queue_bar = QWidget(self)
+        queue_bar_layout = QHBoxLayout(self.search_queue_bar)
+        queue_bar_layout.setContentsMargins(8, 6, 8, 6)
+        self.search_queue_bar.setStyleSheet(
+            "background-color: #1f2937; border: 1px solid #374151; border-radius: 5px; color: #f3f4f6;"
+        )
+
+        n_books = len(self.selected_books)
+        self.queue_info_label = QLabel(f"📚 <b>{n_books} Calibre record(s)</b> loaded into Search Queue", self)
+        queue_bar_layout.addWidget(self.queue_info_label)
+
+        self.start_queue_search_btn = QPushButton(f"▶ Search All ({n_books}) Records (Max 2/book)", self)
+        self.start_queue_search_btn.setStyleSheet("font-weight: bold; background-color: #238636; color: white; padding: 5px 14px;")
+        self.start_queue_search_btn.clicked.connect(self.start_search_queue)
+        queue_bar_layout.addWidget(self.start_queue_search_btn)
+
+        self.stop_queue_search_btn = QPushButton("Stop Queue Search", self)
+        self.stop_queue_search_btn.setStyleSheet("font-weight: bold; background-color: #8c2a2a; color: white; padding: 5px 14px;")
+        self.stop_queue_search_btn.setVisible(False)
+        self.stop_queue_search_btn.clicked.connect(self.stop_search_queue)
+        queue_bar_layout.addWidget(self.stop_queue_search_btn)
+
+        self.dismiss_queue_bar_btn = QPushButton("✕", self)
+        self.dismiss_queue_bar_btn.setToolTip("Dismiss Calibre records search queue")
+        self.dismiss_queue_bar_btn.setFixedWidth(24)
+        self.dismiss_queue_bar_btn.clicked.connect(lambda: self.search_queue_bar.setVisible(False))
+        queue_bar_layout.addWidget(self.dismiss_queue_bar_btn)
+
+        if not self.selected_books:
+            self.search_queue_bar.setVisible(False)
+
+        top_panel.addWidget(self.search_queue_bar)
         main_layout.addLayout(top_panel)
         self.setup_search_completer()
 
@@ -1943,6 +2106,91 @@ class LibgenDialog(QDialog):
 
         QMessageBox.warning(self, "Search Error", f"Failed to search LibGen mirrors:\n{err_msg}")
 
+    # --- Calibre Selection Search Queue Handlers ---
+    def start_search_queue(self):
+        if not self.selected_books:
+            return
+
+        if hasattr(self, "search_queue_worker") and self.search_queue_worker and self.search_queue_worker.isRunning():
+            return
+
+        self.start_queue_search_btn.setVisible(False)
+        self.stop_queue_search_btn.setVisible(True)
+        self.stop_queue_search_btn.setEnabled(True)
+        self.stop_queue_search_btn.setText("Stop Queue Search")
+        self.search_btn.setEnabled(False)
+
+        total_recs = len(self.selected_books)
+        self.status_label.setText(f"Starting serialized search across {total_recs} Calibre book record(s)...")
+        self.search_mirror_label.setText(f"Serialized search: 0/{total_recs} records processed")
+        self.append_log(f"--- Starting Serialized Search Queue ({total_recs} books, max 2 results/book) ---")
+
+        selected_mirror = self.mirror_combo.currentText().strip()
+        if selected_mirror.startswith("Auto"):
+            selected_mirror = "Auto"
+        mirrors = get_mirrors()
+
+        self.search_queue_worker = SearchQueueWorker(
+            records=self.selected_books,
+            mirrors=mirrors,
+            selected_mirror=selected_mirror,
+            timeout=int(prefs.get("timeout", 20)),
+            language=self.lang_combo.checked_items(),
+            fmt=self.format_combo.currentText().strip(),
+            filter_mode=self.filter_combo.currentText().strip(),
+            unique_results=self.unique_checkbox.isChecked(),
+            parent=self,
+        )
+        self.search_queue_worker.progress_signal.connect(self.on_search_queue_progress)
+        self.search_queue_worker.finished_signal.connect(self.on_search_queue_finished)
+        self.search_queue_worker.start()
+
+    def stop_search_queue(self):
+        if hasattr(self, "search_queue_worker") and self.search_queue_worker and self.search_queue_worker.isRunning():
+            self.stop_queue_search_btn.setEnabled(False)
+            self.stop_queue_search_btn.setText("Stopping...")
+            self.status_label.setText("Stopping serialized search queue...")
+            self.search_queue_worker.abort()
+
+    def on_search_queue_progress(self, idx, total, title, status_msg):
+        self.status_label.setText(f"[{idx}/{total}] {status_msg}")
+        self.search_mirror_label.setText(f"Batch Search [{idx}/{total}]: {title}")
+        self.append_log(f"[Search Queue] {status_msg}")
+
+    def on_search_queue_finished(self, all_results, matched_cnt, failed_cnt):
+        self.start_queue_search_btn.setVisible(True)
+        self.start_queue_search_btn.setEnabled(True)
+        self.stop_queue_search_btn.setVisible(False)
+        self.search_btn.setEnabled(True)
+
+        self.search_results = all_results
+        self.populate_results_table()
+        # Highlight/select all rows so user can easily review and click 'Add to Queue' or deselect
+        self.results_table.selectAll()
+
+        msg = f"✓ Found {len(all_results)} match(es) across {matched_cnt} of {len(self.selected_books)} record(s)."
+        if failed_cnt > 0:
+            msg += f" ({failed_cnt} with 0 matches added to Pending)"
+        self.status_label.setText(msg)
+        self.search_mirror_label.setText(msg)
+        self.set_tab_text_for_widget(getattr(self, "tab_results", None), f"Search Results ({len(all_results)})")
+        self.set_current_tab_widget(getattr(self, "tab_results", None))
+
+        self.append_log(f"--- Serialized Search Complete: {len(all_results)} match(es) ready for review in Search Results ---")
+        self.append_log("Select desired books in Search Results and click 'Add to Queue' (Ctrl+Shift+A).")
+
+        QMessageBox.information(
+            self,
+            "Serialized Search Complete",
+            f"Serialized search finished!\n\n"
+            f"• Records searched: {len(self.selected_books)}\n"
+            f"• Matched records: {matched_cnt}\n"
+            f"• Total artifacts found: {len(all_results)}\n"
+            f"• Zero matches: {failed_cnt}\n\n"
+            "All found books have been loaded into Search Results table.\n"
+            "Select the books you want and click 'Add to Queue' to queue them for download."
+        )
+
     def populate_results_table(self):
         books = self.search_results
         self.results_table.setSortingEnabled(False)
@@ -1950,6 +2198,8 @@ class LibgenDialog(QDialog):
         for row, book in enumerate(books):
             title_item = QTableWidgetItem(book.title)
             title_item.setData(Qt.ItemDataRole.UserRole, row)  # Store original index
+            if hasattr(book, "calibre_source") and book.calibre_source:
+                title_item.setToolTip(f"Matched from Calibre: {book.calibre_source}")
             self.results_table.setItem(row, 0, title_item)
             self.results_table.setItem(row, 1, QTableWidgetItem(book.author))
             pub_year = f"{book.publisher} ({book.year})".strip(" ()")
@@ -2839,6 +3089,8 @@ class LibgenDialog(QDialog):
         self.save_header_states()
         if hasattr(self, "search_worker") and self.search_worker and self.search_worker.isRunning():
             self.search_worker.abort()
+        if hasattr(self, "search_queue_worker") and self.search_queue_worker and self.search_queue_worker.isRunning():
+            self.search_queue_worker.abort()
         if self.download_worker and self.download_worker.isRunning():
             reply = QMessageBox.question(
                 self,
