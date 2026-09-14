@@ -1,17 +1,15 @@
 # Changelog
 
-## [v1.10b] - 2026-09-15
+## [v1.11b] - 2026-09-15
 
-- **Hardcover GraphQL Shelf Importer:** Connect directly to Hardcover.app via Bearer API token to fetch and queue user shelves (*Want to Read*, *Currently Reading*, *Read*, custom lists).
-- **Strict ISBN vs Title/Author Matching:** Choose between querying LibGen exclusively by ISBN (`search_field="i"`) or falling back to Title/Author cascade.
-- **Universal Calibre Book Prefill:** Launching the plugin with any book selected in Calibre automatically populates the search query with its title and authors.
 - **Reorderable Dialog Tabs:** Tabs can now be rearranged via drag-and-drop (`QTabWidget.setMovable(True)`), with dynamic tab switching and order persistence across restarts.
-- **Queue Segmentation & Retention Policy:** Separate views for `Queued`, `Downloading`, `Downloaded`, and `Failed`. Auto-prunes history records older than $X$ days with configurable history limits.
+- **Queue Segmentation & Retention Policy:** Separate views for `Queued`, `Downloading`, `Downloaded`, and `Failed` (removed "All"). Auto-prunes history records older than $X$ days with configurable history limits.
 - **Persistent Table Column Widths:** Preserves header column dimensions across dialog restarts for search results, queue, and mirrors tables.
 - **Pending Searches Tracker:** Zero-result queries are automatically captured in a quick-retry dropdown.
 - **Multi-Language Selector:** Combobox with individual checkable language items and compact short code badges.
 - **⚡ Fast Mode:** Probes mirrors with a tight 3s timeout, instantly routing dead or slow mirrors to the Failed queue for rapid recovery.
 - **Discard Dead Mirrors:** One-click removal of failed or unreachable mirrors after connection tests.
+- **Qt Event Loop Fix:** Resolved `QApplication` import error during batch event processing.
 
 ## [v1.0.1 "Godzila"] - 2026-09-12
 

@@ -141,9 +141,7 @@ Join our Discord server for discussions, feature requests, mirror health updates
 
 ## 📦 Releases & Version History
 
-- **[v1.10b (Latest Beta)](https://github.com/7sarus/calibre-lib/releases)**:
-  - **Hardcover API Integration**: Import user shelves (*Want to Read*, *Currently Reading*, *Read*, custom lists) via GraphQL with strict ISBN or Title/Author matching modes.
-  - **Calibre Library Book Prefill**: Auto-populates search query when launching plugin with any book record selected in Calibre.
+- **[v1.11b (Latest Beta)](https://github.com/7sarus/calibre-lib/releases)**:
   - **Reorderable Tabs**: Drag-and-drop movable tabs (`QTabWidget.setMovable(True)`) with dynamic widget resolution and tab order persistence.
   - **Queue Segmentation & Auto-Retention**: Filter views for `Queued`, `Downloading`, `Downloaded`, and `Failed`. Automatic history pruning older than $X$ days and configurable queue/history limits.
   - **Table Column Width Persistence**: Restores `results_table`, `queue_table`, and `mirrors_table` column widths across restarts via Qt header state hex serialization.
