@@ -855,12 +855,13 @@ class HardcoverShelfDialog(QDialog):
         top_layout = QVBoxLayout(top_group)
 
         token_row = QHBoxLayout()
-        token_row.addWidget(QLabel("Hardcover API Token:"))
+        token_row.addWidget(QLabel("Token:"))
         self.token_edit = QLineEdit(self)
         self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.token_edit.setText(prefs.get("hardcover_token", ""))
-        self.token_edit.setPlaceholderText("Paste token from https://hardcover.app/account/api")
-        token_row.addWidget(self.token_edit, stretch=2)
+        self.token_edit.setPlaceholderText("Hardcover API token")
+        self.token_edit.setMaximumWidth(360)
+        token_row.addWidget(self.token_edit, stretch=1)
 
         self.fetch_shelves_btn = QPushButton("Refresh Shelves", self)
         self.fetch_shelves_btn.setStyleSheet("font-weight: bold;")
@@ -869,11 +870,12 @@ class HardcoverShelfDialog(QDialog):
         top_layout.addLayout(token_row)
 
         shelf_row = QHBoxLayout()
-        shelf_row.addWidget(QLabel("Select Shelf / List:"))
+        shelf_row.addWidget(QLabel("Shelf:"))
         self.shelf_combo = QComboBox(self)
         self.shelf_combo.addItem("Use Refresh Shelves to load...")
         self.shelf_combo.currentIndexChanged.connect(self.on_shelf_selected)
-        shelf_row.addWidget(self.shelf_combo, stretch=2)
+        self.shelf_combo.setMinimumWidth(220)
+        shelf_row.addWidget(self.shelf_combo, stretch=1)
 
         self.load_books_btn = QPushButton("Refresh Books", self)
         self.load_books_btn.clicked.connect(lambda: self.on_load_books(force_refresh=True))
@@ -881,12 +883,14 @@ class HardcoverShelfDialog(QDialog):
         top_layout.addLayout(shelf_row)
 
         # Matching mode
-        match_group = QGroupBox("Queue Matching Mode")
-        match_layout = QHBoxLayout(match_group)
+        match_group = QGroupBox("Queue Matching")
+        match_layout = QVBoxLayout(match_group)
         self.mode_btn_group = QButtonGroup(self)
 
-        self.isbn_mode_radio = QRadioButton("Match by ISBN Only (Strict - use ISBN column only to query LibGen)")
-        self.text_mode_radio = QRadioButton("Match by Author & Title (Search LibGen using book title & author)")
+        self.isbn_mode_radio = QRadioButton("ISBN only")
+        self.isbn_mode_radio.setToolTip("Use ISBN column only to query LibGen")
+        self.text_mode_radio = QRadioButton("Author + title")
+        self.text_mode_radio.setToolTip("Search LibGen using book title and author")
         self.mode_btn_group.addButton(self.isbn_mode_radio)
         self.mode_btn_group.addButton(self.text_mode_radio)
 
@@ -897,10 +901,13 @@ class HardcoverShelfDialog(QDialog):
             self.text_mode_radio.setChecked(True)
 
         self.isbn_mode_radio.toggled.connect(self.on_mode_changed)
-        match_layout.addWidget(self.isbn_mode_radio)
-        match_layout.addWidget(self.text_mode_radio)
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(self.isbn_mode_radio)
+        mode_row.addWidget(self.text_mode_radio)
+        mode_row.addStretch(1)
+        match_layout.addLayout(mode_row)
 
-        self.skip_library_checkbox = QCheckBox("Skip books already in Calibre library", self)
+        self.skip_library_checkbox = QCheckBox("Skip in-library books", self)
         self.skip_library_checkbox.setToolTip("Checks your Calibre database for matching ISBN or title to avoid duplicate searches")
         self.skip_library_checkbox.setChecked(bool(prefs.get("hardcover_skip_in_library", True)))
         self.skip_library_checkbox.stateChanged.connect(lambda v: prefs.__setitem__("hardcover_skip_in_library", bool(v)))
@@ -949,7 +956,7 @@ class HardcoverShelfDialog(QDialog):
         self.max_queue_spin.valueChanged.connect(lambda v: prefs.__setitem__("hardcover_max_queue_limit", v))
         btn_row.addWidget(self.max_queue_spin)
 
-        self.queue_btn = QPushButton("▶ Add Selected to Search Queue", self)
+        self.queue_btn = QPushButton("▶ Add to Queue", self)
         self.queue_btn.setStyleSheet(PRIMARY_BUTTON_STYLE)
         self.queue_btn.setToolTip("Add selected books to the main window's parallel Search Queue")
         self.queue_btn.clicked.connect(self.on_queue_selected)
