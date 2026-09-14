@@ -9,7 +9,10 @@ import os
 import re
 import time
 import json
+import threading
 from calibre.utils.config import JSONConfig
+
+_prefs_lock = threading.Lock()
 from qt.core import (
     QWidget,
     QVBoxLayout,
@@ -27,7 +30,7 @@ from qt.core import (
 # Plugin Version definitions
 PLUGIN_VERSION = (1, 11, 0, "b")
 _BASE_VERSION_STR = "v1.11b"
-_BUILD_COMMIT = "61"
+_BUILD_COMMIT = "62"
 
 
 def _resolve_version_str():
@@ -126,7 +129,8 @@ def record_successful_mirror(mirror_url):
         return
     clean = mirror_url.strip().rstrip("/")
     if clean:
-        prefs["last_successful_mirror"] = clean
+        with _prefs_lock:
+            prefs["last_successful_mirror"] = clean
 
 def add_custom_mirror(url):
     with _prefs_lock:
