@@ -1,0 +1,1126 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>LibgenDialog</class>
+ <widget class="QDialog" name="LibgenDialog">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>1000</width>
+    <height>620</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>LibGen Downloader</string>
+  </property>
+  <layout class="QHBoxLayout" name="base_layout">
+   <item>
+    <widget class="QWidget" name="left_widget" native="true">
+     <layout class="QVBoxLayout" name="main_layout">
+      <property name="leftMargin">
+       <number>0</number>
+      </property>
+      <property name="topMargin">
+       <number>0</number>
+      </property>
+      <property name="rightMargin">
+       <number>0</number>
+      </property>
+      <property name="bottomMargin">
+       <number>0</number>
+      </property>
+      <property name="spacing">
+       <number>6</number>
+      </property>
+      <item>
+       <layout class="QVBoxLayout" name="top_panel">
+        <property name="spacing">
+         <number>6</number>
+        </property>
+        <item>
+         <layout class="QHBoxLayout" name="row1">
+          <property name="spacing">
+           <number>6</number>
+          </property>
+          <item>
+           <widget class="QLabel" name="label_search">
+            <property name="text">
+             <string>Search:</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLineEdit" name="search_input">
+            <property name="placeholderText">
+             <string>Search title, author, series, ISBN...</string>
+            </property>
+            <property name="clearButtonEnabled">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="label_format">
+            <property name="text">
+             <string>Format:</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QComboBox" name="format_combo"/>
+          </item>
+          <item>
+           <widget class="QLabel" name="label_lang">
+            <property name="text">
+             <string>Lang:</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QComboBox" name="lang_combo">
+            <property name="minimumSize">
+             <size>
+              <width>85</width>
+              <height>0</height>
+             </size>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="search_btn">
+            <property name="text">
+             <string>Search</string>
+            </property>
+            <property name="styleSheet">
+             <string notr="true">font-weight: 600; padding: 5px 14px;</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="stop_search_btn">
+            <property name="visible">
+             <bool>false</bool>
+            </property>
+            <property name="text">
+             <string>Stop Search</string>
+            </property>
+            <property name="styleSheet">
+             <string notr="true">font-weight: 600; padding: 5px 14px;</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="hardcover_btn">
+            <property name="toolTip">
+             <string>Import and queue books from your Hardcover.app shelves / lists</string>
+            </property>
+            <property name="styleSheet">
+             <string notr="true">font-weight: bold; padding: 5px 10px;</string>
+            </property>
+            <property name="text">
+             <string>📚 Hardcover</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="toggle_filters_btn">
+            <property name="toolTip">
+             <string>Toggle secondary search parameters (Field, Category, Mirror, History, Retries)</string>
+            </property>
+            <property name="styleSheet">
+             <string notr="true">padding: 5px 10px;</string>
+            </property>
+            <property name="text">
+             <string>⚙ Filters ▾</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <widget class="QWidget" name="advanced_filters_widget" native="true">
+          <property name="visible">
+           <bool>false</bool>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">#advanced_filters_widget { background: palette(base); border: 1px solid palette(mid); border-radius: 6px; padding: 4px; }</string>
+          </property>
+          <layout class="QVBoxLayout" name="adv_vlayout">
+           <property name="leftMargin">
+            <number>8</number>
+           </property>
+           <property name="topMargin">
+            <number>6</number>
+           </property>
+           <property name="rightMargin">
+            <number>8</number>
+           </property>
+           <property name="bottomMargin">
+            <number>6</number>
+           </property>
+           <property name="spacing">
+            <number>6</number>
+           </property>
+           <item>
+            <layout class="QHBoxLayout" name="adv_row1">
+             <property name="spacing">
+              <number>8</number>
+             </property>
+             <item>
+              <widget class="QLabel" name="label_field">
+               <property name="text">
+                <string>Field:</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QComboBox" name="field_combo">
+               <property name="maximumSize">
+                <size>
+                 <width>120</width>
+                 <height>16777215</height>
+                </size>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="label_cat">
+               <property name="text">
+                <string>Cat:</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QComboBox" name="category_combo">
+               <property name="maximumSize">
+                <size>
+                 <width>140</width>
+                 <height>16777215</height>
+                </size>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="label_max">
+               <property name="text">
+                <string>Max:</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QSpinBox" name="max_results_spinbox">
+               <property name="maximumSize">
+                <size>
+                 <width>65</width>
+                 <height>16777215</height>
+                </size>
+               </property>
+               <property name="minimum">
+                <number>1</number>
+               </property>
+               <property name="maximum">
+                <number>1000</number>
+               </property>
+               <property name="value">
+                <number>5</number>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QLabel" name="label_mirror">
+               <property name="text">
+                <string>Mirror:</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QComboBox" name="mirror_combo">
+               <property name="maximumSize">
+                <size>
+                 <width>150</width>
+                 <height>16777215</height>
+                </size>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="fetch_mirrors_btn">
+               <property name="toolTip">
+                <string>Fetch active mirrors from open-slum.org</string>
+               </property>
+               <property name="text">
+                <string>Fetch Live</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <spacer name="adv_spacer1">
+               <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>40</width>
+                 <height>20</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+            </layout>
+           </item>
+           <item>
+            <layout class="QHBoxLayout" name="adv_row2">
+             <property name="spacing">
+              <number>8</number>
+             </property>
+             <item>
+              <widget class="QLabel" name="label_mode">
+               <property name="text">
+                <string>Mode:</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QComboBox" name="filter_combo">
+               <property name="maximumSize">
+                <size>
+                 <width>110</width>
+                 <height>16777215</height>
+                </size>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QCheckBox" name="unique_checkbox">
+               <property name="toolTip">
+                <string>Filter out duplicate books (same title, author, and format)</string>
+               </property>
+               <property name="text">
+                <string>Unique</string>
+               </property>
+               <property name="checked">
+                <bool>true</bool>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QCheckBox" name="history_checkbox">
+               <property name="toolTip">
+                <string>Opt-in: Save search queries to local file and enable autocomplete</string>
+               </property>
+               <property name="text">
+                <string>History</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="history_settings_btn">
+               <property name="maximumSize">
+                <size>
+                 <width>26</width>
+                 <height>16777215</height>
+                </size>
+               </property>
+               <property name="toolTip">
+                <string>Configure search &amp; download history limits and auto-retention</string>
+               </property>
+               <property name="text">
+                <string>⚙</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QWidget" name="pending_widget" native="true">
+               <layout class="QHBoxLayout" name="pending_layout">
+                <property name="leftMargin">
+                 <number>0</number>
+                </property>
+                <property name="topMargin">
+                 <number>0</number>
+                </property>
+                <property name="rightMargin">
+                 <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                 <number>0</number>
+                </property>
+                <property name="spacing">
+                 <number>4</number>
+                </property>
+                <item>
+                 <widget class="QLabel" name="label_pending">
+                  <property name="text">
+                   <string>Pending:</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QComboBox" name="pending_combo">
+                  <property name="maximumSize">
+                   <size>
+                    <width>180</width>
+                    <height>16777215</height>
+                   </size>
+                  </property>
+                  <property name="toolTip">
+                   <string>Select a failed or zero-result search to retry</string>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="QPushButton" name="pending_clear_btn">
+                  <property name="maximumSize">
+                   <size>
+                    <width>24</width>
+                    <height>16777215</height>
+                   </size>
+                  </property>
+                  <property name="toolTip">
+                   <string>Remove selected pending search query</string>
+                  </property>
+                  <property name="text">
+                   <string>✕</string>
+                  </property>
+                 </widget>
+                </item>
+               </layout>
+              </widget>
+             </item>
+             <item>
+              <spacer name="adv_spacer2">
+               <property name="orientation">
+                <enum>Qt::Horizontal</enum>
+               </property>
+               <property name="sizeHint" stdset="0">
+                <size>
+                 <width>40</width>
+                 <height>20</height>
+                </size>
+               </property>
+              </spacer>
+             </item>
+            </layout>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <widget class="QWidget" name="search_queue_bar" native="true">
+          <property name="visible">
+           <bool>false</bool>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">background: palette(base); border: 1px solid palette(mid); border-radius: 5px; color: palette(text);</string>
+          </property>
+          <layout class="QHBoxLayout" name="queue_bar_layout">
+           <property name="leftMargin">
+            <number>8</number>
+           </property>
+           <property name="topMargin">
+            <number>6</number>
+           </property>
+           <property name="rightMargin">
+            <number>8</number>
+           </property>
+           <property name="bottomMargin">
+            <number>6</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="queue_info_label">
+             <property name="text">
+              <string>📚 0 Calibre record(s) loaded into Search Queue</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="start_queue_search_btn">
+             <property name="styleSheet">
+              <string notr="true">font-weight: 600; padding: 5px 14px;</string>
+             </property>
+             <property name="text">
+              <string>▶ Search All Records (Max 2/book)</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="stop_queue_search_btn">
+             <property name="visible">
+              <bool>false</bool>
+             </property>
+             <property name="styleSheet">
+              <string notr="true">font-weight: 600; padding: 5px 14px;</string>
+             </property>
+             <property name="text">
+              <string>Stop Queue Search</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QPushButton" name="dismiss_queue_bar_btn">
+             <property name="maximumSize">
+              <size>
+               <width>24</width>
+               <height>16777215</height>
+              </size>
+             </property>
+             <property name="toolTip">
+              <string>Dismiss Calibre records search queue</string>
+             </property>
+             <property name="text">
+              <string>✕</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+       </layout>
+      </item>
+      <item>
+       <widget class="QTabWidget" name="tabs">
+        <property name="movable">
+         <bool>true</bool>
+        </property>
+        <widget class="QWidget" name="tab_results">
+         <attribute name="title">
+          <string>Search Results (0)</string>
+         </attribute>
+         <layout class="QVBoxLayout" name="results_layout">
+          <item>
+           <layout class="QHBoxLayout" name="search_status_box">
+            <item>
+             <widget class="QLabel" name="search_mirror_label">
+              <property name="styleSheet">
+               <string notr="true">font-weight: 600; color: palette(highlight);</string>
+              </property>
+              <property name="text">
+               <string>Search status: Ready</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QProgressBar" name="search_progress_bar">
+              <property name="visible">
+               <bool>false</bool>
+              </property>
+              <property name="maximumSize">
+               <size>
+                <width>300</width>
+                <height>16</height>
+               </size>
+              </property>
+              <property name="styleSheet">
+               <string notr="true">QProgressBar { border: 1px solid palette(mid); border-radius: 4px; background: palette(base); text-align: center; font-size: 11px; font-weight: 600; color: palette(text); } QProgressBar::chunk { background: palette(highlight); border-radius: 3px; }</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <widget class="QTableWidget" name="results_table">
+            <property name="editTriggers">
+             <set>QAbstractItemView::NoEditTriggers</set>
+            </property>
+            <property name="selectionMode">
+             <enum>QAbstractItemView::ExtendedSelection</enum>
+            </property>
+            <property name="selectionBehavior">
+             <enum>QAbstractItemView::SelectRows</enum>
+            </property>
+            <property name="sortingEnabled">
+             <bool>true</bool>
+            </property>
+            <column>
+             <property name="text">
+              <string>Title</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Author</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Publisher / Year</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Language</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Format</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Size</string>
+             </property>
+            </column>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="btn_bar">
+            <item>
+             <widget class="QPushButton" name="select_all_btn">
+              <property name="text">
+               <string>Select All</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="deselect_all_btn">
+              <property name="text">
+               <string>Deselect All</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="discard_selected_results_btn">
+              <property name="text">
+               <string>Discard Selected</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="btn_spacer">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>40</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+            <item>
+             <widget class="QPushButton" name="queue_selected_btn">
+              <property name="styleSheet">
+               <string notr="true">font-weight: bold; padding: 5px 10px;</string>
+              </property>
+              <property name="text">
+               <string>Add to Queue</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="download_now_btn">
+              <property name="text">
+               <string>Download Selected</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+        <widget class="QWidget" name="tab_queue">
+         <attribute name="title">
+          <string>Queue (0)</string>
+         </attribute>
+         <layout class="QVBoxLayout" name="queue_layout">
+          <item>
+           <layout class="QHBoxLayout" name="filter_bar">
+            <item>
+             <widget class="QLabel" name="label_view">
+              <property name="text">
+               <string>View:</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="filter_spacer">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>40</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <widget class="QProgressBar" name="bulk_progress_bar">
+            <property name="visible">
+             <bool>false</bool>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>18</height>
+             </size>
+            </property>
+            <property name="styleSheet">
+             <string notr="true">QProgressBar { border: 1px solid palette(mid); border-radius: 4px; background: palette(base); text-align: center; font-size: 11px; font-weight: 600; color: palette(text); } QProgressBar::chunk { background: palette(highlight); border-radius: 3px; }</string>
+            </property>
+            <property name="format">
+             <string>Bulk Download: Ready (0/0)</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QTableWidget" name="queue_table">
+            <property name="selectionBehavior">
+             <enum>QAbstractItemView::SelectRows</enum>
+            </property>
+            <column>
+             <property name="text">
+              <string>Title</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Author</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Format</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Size</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Status</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Speed</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Progress</string>
+             </property>
+            </column>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="log_header_box">
+            <item>
+             <widget class="QPushButton" name="log_toggle_btn">
+              <property name="cursor">
+               <cursorShape>PointingHandCursor</cursorShape>
+              </property>
+              <property name="styleSheet">
+               <string notr="true">text-align: left; font-weight: 600; color: palette(text); font-size: 11px; padding: 2px;</string>
+              </property>
+              <property name="text">
+               <string>▶ Live Activity Log</string>
+              </property>
+              <property name="flat">
+               <bool>true</bool>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="log_spacer">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>40</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <widget class="QPlainTextEdit" name="log_view">
+            <property name="visible">
+             <bool>false</bool>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>16777215</width>
+              <height>120</height>
+             </size>
+            </property>
+            <property name="styleSheet">
+             <string notr="true">background: palette(base); color: palette(text); font-family: monospace; font-size: 11px; padding: 6px; border: 1px solid palette(mid); border-radius: 4px;</string>
+            </property>
+            <property name="readOnly">
+             <bool>true</bool>
+            </property>
+            <property name="placeholderText">
+             <string>Live download events, mirror cycles, and streaming chunks will appear here...</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="q_row1">
+            <item>
+             <widget class="QPushButton" name="clear_downloaded_btn">
+              <property name="toolTip">
+               <string>Remove downloaded / completed items from queue</string>
+              </property>
+              <property name="text">
+               <string>Clear Finished</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="remove_queue_btn">
+              <property name="text">
+               <string>Remove Selected</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="clear_queue_btn">
+              <property name="text">
+               <string>Clear Queue</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="retry_failed_btn">
+              <property name="styleSheet">
+               <string notr="true">font-weight: bold; padding: 4px 10px;</string>
+              </property>
+              <property name="text">
+               <string>Retry Failed</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="q_row1_spacer">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>40</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="q_row2">
+            <item>
+             <widget class="QCheckBox" name="fast_mode_checkbox">
+              <property name="toolTip">
+               <string>Fast Mode: 3s mirror probe, skips dead/troubled downloads immediately to Failed list</string>
+              </property>
+              <property name="text">
+               <string>⚡ Fast Mode</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QCheckBox" name="auto_retry_checkbox">
+              <property name="text">
+               <string>Auto-retry until all downloaded</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="q_row2_spacer">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>40</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+            <item>
+             <widget class="QPushButton" name="stop_download_btn">
+              <property name="visible">
+               <bool>false</bool>
+              </property>
+              <property name="styleSheet">
+               <string notr="true">font-weight: 600; padding: 5px 14px;</string>
+              </property>
+              <property name="text">
+               <string>Stop Download</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="start_download_btn">
+              <property name="styleSheet">
+               <string notr="true">font-weight: 600; padding: 5px 14px;</string>
+              </property>
+              <property name="text">
+               <string>Start Bulk Download</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+        <widget class="QWidget" name="tab_mirrors">
+         <attribute name="title">
+          <string>Mirrors &amp; Health</string>
+         </attribute>
+         <layout class="QVBoxLayout" name="mirrors_layout">
+          <item>
+           <widget class="QTableWidget" name="mirrors_table">
+            <property name="selectionBehavior">
+             <enum>QAbstractItemView::SelectRows</enum>
+            </property>
+            <column>
+             <property name="text">
+              <string>Mirror URL</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Status</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Latency</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Speed</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Type</string>
+             </property>
+            </column>
+            <column>
+             <property name="text">
+              <string>Action</string>
+             </property>
+            </column>
+           </widget>
+          </item>
+          <item>
+           <layout class="QHBoxLayout" name="mirror_actions_bar">
+            <item>
+             <widget class="QPushButton" name="test_all_mirrors_btn">
+              <property name="text">
+               <string>Ping / Test All Mirrors</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="sort_speed_btn">
+              <property name="styleSheet">
+               <string notr="true">font-weight: bold;</string>
+              </property>
+              <property name="text">
+               <string>Sort by Speed</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="set_primary_btn">
+              <property name="text">
+               <string>Set Selected as Primary</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <widget class="QPushButton" name="discard_dead_btn">
+              <property name="styleSheet">
+               <string notr="true">font-weight: 600; padding: 4px 10px;</string>
+              </property>
+              <property name="toolTip">
+               <string>Remove mirrors that failed latency/bandwidth tests from your configured mirrors</string>
+              </property>
+              <property name="text">
+               <string>Discard Dead Mirrors</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="mirror_actions_spacer">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>40</width>
+                <height>20</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <widget class="QGroupBox" name="add_group">
+            <property name="title">
+             <string>Add Custom Mirror</string>
+            </property>
+            <layout class="QHBoxLayout" name="add_layout">
+             <item>
+              <widget class="QLineEdit" name="add_mirror_input">
+               <property name="placeholderText">
+                <string>https://libgen.is or custom mirror URL...</string>
+               </property>
+              </widget>
+             </item>
+             <item>
+              <widget class="QPushButton" name="add_mirror_btn">
+               <property name="text">
+                <string>Add Mirror</string>
+               </property>
+              </widget>
+             </item>
+            </layout>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </widget>
+      </item>
+      <item>
+       <layout class="QHBoxLayout" name="status_bar">
+        <item>
+         <widget class="QLabel" name="status_label">
+          <property name="text">
+           <string>Ready</string>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="neko_label">
+          <property name="maximumSize">
+           <size>
+            <width>85</width>
+            <height>16777215</height>
+           </size>
+          </property>
+          <property name="styleSheet">
+           <string notr="true">font-family: monospace; font-weight: 600; font-size: 13px; color: palette(text);</string>
+          </property>
+          <property name="text">
+           <string>(=^.^=)zZ</string>
+          </property>
+          <property name="alignment">
+           <set>Qt::AlignCenter</set>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QLabel" name="version_badge">
+          <property name="cursor">
+           <cursorShape>PointingHandCursor</cursorShape>
+          </property>
+          <property name="text">
+           <string>v1.11b-63</string>
+          </property>
+         </widget>
+        </item>
+       </layout>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QWidget" name="right_widget" native="true">
+     <property name="maximumSize">
+      <size>
+       <width>200</width>
+       <height>16777215</height>
+      </size>
+     </property>
+     <layout class="QVBoxLayout" name="right_layout">
+      <property name="leftMargin">
+       <number>0</number>
+      </property>
+      <property name="topMargin">
+       <number>0</number>
+      </property>
+      <property name="rightMargin">
+       <number>0</number>
+      </property>
+      <property name="bottomMargin">
+       <number>0</number>
+      </property>
+      <item>
+       <widget class="QLabel" name="label_cover_preview">
+        <property name="text">
+         <string>&lt;b&gt;Cover Preview&lt;/b&gt;</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="cover_label">
+        <property name="minimumSize">
+         <size>
+          <width>200</width>
+          <height>300</height>
+         </size>
+        </property>
+        <property name="maximumSize">
+         <size>
+          <width>200</width>
+          <height>300</height>
+         </size>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">background: palette(base); border: 1px solid palette(mid); color: palette(text);</string>
+        </property>
+        <property name="text">
+         <string>No Selection</string>
+        </property>
+        <property name="alignment">
+         <set>Qt::AlignCenter</set>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="label_live_mirror">
+        <property name="text">
+         <string>&lt;b&gt;Live Mirror Status&lt;/b&gt;</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPlainTextEdit" name="side_mirror_status">
+        <property name="maximumSize">
+         <size>
+          <width>200</width>
+          <height>16777215</height>
+         </size>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">background: palette(base); color: palette(text); font-family: monospace; font-size: 11px;</string>
+        </property>
+        <property name="readOnly">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

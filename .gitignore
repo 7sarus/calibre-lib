@@ -8,6 +8,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+releases/
 
 # Calibre cache / runtime
 *.calibre_tmp
@@ -20,3 +21,5 @@ env/
 venv/
 .idea/
 .vscode/
+benchmark.log
+*.log
