@@ -8,6 +8,27 @@ updated: 2026-09-15
 
 ## 2026-09-15
 
+- id: verbose-download-progress-and-emoji-cdn-rankings
+  type: feat
+  files: [dialog.py, progress_delegate.py, config.py]
+  summary: Added verbose download progress metrics (MB/MB, speed icons, and ETA) across queue cells, status bar, and bulk progress bar. Enriched Live Mirror Status panel with emojis (🟢/🔴, 📶, ⚡) and ranked top CDNs with medal badges (🏆, 🥈, 🥉) at session completion.
+  why: User requested more verbose download progress, ranking best CDNs in session, and displaying them in the live mirror status field with emojis.
+  validation: Tested in GUI; progress delegate and dialog compile without error
+
+- id: fix-download-503-hotlink-and-tune-segments
+  type: fix
+  files: [scraper.py, config.py, benchmark_download.py]
+  summary: Injected mirror origin Referer (https://<host>/) on all segment and single-stream requests to bypass Cloudflare HTTP 503 anti-hotlink checks. Calibrated segment concurrency to 2-3 connections to avoid rate-limiting lockouts.
+  why: Direct CDN requests returned HTTP 503; high connection counts triggered Cloudflare connection floods.
+  validation: Rigorous benchmark suite (benchmark_download.py) demonstrated successful HTTP 200/206 streaming and verified stable 40-55 KB/s throughput.
+
+- id: multi-segment-download-with-ua-rotation
+  type: perf
+  files: [scraper.py, config.py]
+  summary: Enabled segmented downloading from single CDN source across parallel range-requests with per-segment User-Agent rotation and Connection keep-alive.
+  why: LibGen mirrors resolve to the same underlying CDN host; parallel range connections bypass per-connection throttling.
+  validation: Successfully split and reassembled files with checksum verification.
+
 - id: optimize-download-speed-concurrency-and-buffer
   type: perf
   files: [dialog.py, scraper.py, config.py]

@@ -3,8 +3,11 @@
 ## [v1.11b] - 2026-09-15
 
 - **Streamlined Top Search Bar:** Clean primary row with search input, format, language, search, and Hardcover; secondary parameters tucked into an expandable `[⚙ Filters ▾]` drawer that persists its state across sessions.
-- **Modern Vector Progress Bars:** Replaced retro ASCII progress bars (`[████░░░░░░]`) with native `ProgressBarDelegate` rendering smooth rounded progress bars with live percentages and status badges.
-- **Dedicated Bulk Download Progress Bar:** Added an overall session progress bar in the Queue tab showing batch completion (`X / Y books (Z%)`) and bandwidth.
+- **Modern Vector Progress Bars & Verbose Metrics:** Replaced retro ASCII bars with native `ProgressBarDelegate` rendering smooth rounded progress bars showing detailed bytes transferred (`MB / MB`), live speed icons (`⚡`, `🚀`, `📥`), and ETA countdowns.
+- **Dedicated Bulk Download Progress Bar:** Added an overall session progress bar in the Queue tab showing batch completion (`X / Y books (Z%)`), speed, and ETA.
+- **CDN Hotlink 503 Resolution:** Fixed Cloudflare HTTP 503 errors by dynamically injecting valid mirror origin Referers across multi-segment and single-stream transfers.
+- **Tuned Segmented Concurrency:** Calibrated range-request concurrency to 2–3 parallel connections per file with per-segment User-Agent rotation to prevent Cloudflare rate-limiting.
+- **Emoji-Rich Live Mirror & CDN Status:** Real-time side panel showing connection states with indicators (`🟢`/`🔴`, `📶`, `⚡`), and session-end fastest CDN rankings with trophies (`🏆`, `🥈`, `🥉`).
 - **Search Progress Bar:** Added an animated progress bar in the search tab for live mirror queries and serialized Calibre search steps.
 - **Collapsible Activity Log:** Converted the static 120px activity log into an expandable panel (`▶ Live Activity Log`) to maximize table rows.
 - **IndexError & Download Race Fix:** Resolved `IndexError` in `on_item_progress` / `on_item_status` with bounds checking and protected queue modifications during active downloads.
