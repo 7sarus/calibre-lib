@@ -1185,17 +1185,26 @@ class CsvImportDialog(QDialog):
                 return False
             db = gui.current_db
             new_api = getattr(db, "new_api", None)
-            if isbn and new_api:
+            if not new_api:
+                return False
+
+            if isbn:
                 clean_isbn = isbn.replace("-", "").strip()
                 if clean_isbn and new_api.search(f"isbn:{clean_isbn}"):
                     return True
-            if title and new_api:
-                clean_t = title.replace('"', '').strip()
-                clean_a = author.replace('"', '').strip() if author else ""
+
+            if title:
+                # Clean title & subtitles (remove quotes, brackets, subtitles after :)
+                clean_t = re.split(r'[:(;,]', title)[0].replace('"', '').strip()
+                clean_a = re.split(r'[,;&]', author)[0].replace('"', '').strip() if author else ""
+                
                 if clean_t:
                     if clean_a and new_api.search(f'title:"={clean_t}" and authors:"={clean_a}"'):
                         return True
                     if new_api.search(f'title:"={clean_t}"'):
+                        return True
+                    # Partial match if title is long enough
+                    if len(clean_t) >= 4 and new_api.search(f'title:"{clean_t}"'):
                         return True
         except Exception:
             pass
