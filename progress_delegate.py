@@ -57,13 +57,18 @@ class ProgressBarDelegate(QStyledItemDelegate):
         highlighted_text_color = option.palette.highlightedText().color()
         highlight_color = option.palette.highlight().color()
 
+        custom_label = index.data(Qt.ItemDataRole.UserRole + 2)
+
         # Accent color depending on status
         if "fail" in status_str or "err" in status_str or "skip" in status_str:
             fill_color = QColor("#dc2626")  # Red
-            label_text = "Failed"
+            label_text = "❌ Failed"
         elif "downloaded" in status_str or "added" in status_str or percent >= 100:
             fill_color = QColor("#16a34a")  # Green
             label_text = "✓ Done"
+        elif custom_label:
+            fill_color = highlight_color
+            label_text = str(custom_label)
         elif percent > 0:
             fill_color = highlight_color
             label_text = f"{percent}%"

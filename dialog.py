@@ -1522,6 +1522,7 @@ class LibgenDialog(QDialog):
         self.search_results = []
         self.queue_items = []
         self.mirror_health = {}
+        self.session_cdn_speeds = {}
         self.download_worker = None
         self.search_worker = None
         self.search_queue_worker = None
@@ -1591,13 +1592,13 @@ class LibgenDialog(QDialog):
         self.side_neko_label.setVisible(self.show_cats)
         right_layout.addWidget(self.side_neko_label)
 
-        self.side_mirror_header = QLabel("<b>Live Mirror Status</b>")
+        self.side_mirror_header = QLabel("<b>🌐 Live Mirrors & CDNs</b>")
         self.side_mirror_header.setVisible(self.show_stats)
         right_layout.addWidget(self.side_mirror_header)
 
         self.side_mirror_status = QPlainTextEdit(self)
         self.side_mirror_status.setReadOnly(True)
-        self.side_mirror_status.setFixedWidth(200)
+        self.side_mirror_status.setFixedWidth(230)
         self.side_mirror_status.setStyleSheet(MONO_PANEL_STYLE)
         self.side_mirror_status.setVisible(self.show_stats)
         right_layout.addWidget(self.side_mirror_status)
@@ -2986,17 +2987,20 @@ class LibgenDialog(QDialog):
         if self.queue_items:
             self.update_queue_table()
 
-    def _set_queue_item_progress(self, row, percent, status_text=None):
+    def _set_queue_item_progress(self, row, percent, status_text=None, custom_label=None):
         if row >= self.queue_table.rowCount():
             return
         item = self.queue_table.item(row, 6)
+        display_str = custom_label or f"{percent}%"
         if not item:
-            item = QTableWidgetItem(f"{percent}%")
+            item = QTableWidgetItem(display_str)
             self.queue_table.setItem(row, 6, item)
         item.setData(Qt.ItemDataRole.UserRole, int(percent))
         if status_text is not None:
             item.setData(Qt.ItemDataRole.UserRole + 1, str(status_text))
-        item.setText(f"{percent}%")
+        if custom_label is not None:
+            item.setData(Qt.ItemDataRole.UserRole + 2, str(custom_label))
+        item.setText(display_str)
 
     def toggle_activity_log(self, force_open=False):
         if not hasattr(self, "log_view"):
@@ -3226,9 +3230,11 @@ class LibgenDialog(QDialog):
         self.populate_mirrors_table()
         
         host = urlparse(url).netloc or url
-        status = "OK" if is_ok else "FAIL"
-        speed = f"{speed_str}" if is_ok else ""
-        self.side_mirror_status.appendPlainText(f"[{status}] {host} {speed}")
+        icon = "🟢" if is_ok else "🔴"
+        lat_tag = f"📶 {ms}ms" if ms > 0 else ""
+        speed_tag = f"⚡ {speed_str}" if (is_ok and speed_str) else ""
+        detail = f"{lat_tag} {speed_tag}".strip()
+        self.side_mirror_status.appendPlainText(f"{icon} {host} {detail}")
 
     def on_all_mirrors_tested(self):
         self.test_all_mirrors_btn.setEnabled(True)
@@ -3559,19 +3565,20 @@ class LibgenDialog(QDialog):
     def on_link_trying(self, idx, url, stage):
         host = urlparse(url).netloc or url
         if stage == "resolving":
-            status_text = f"Resolving ({host})..."
+            status_text = f"🔍 Resolving ({host})..."
         elif stage == "segmented":
-            status_text = f"Piece-together ({host})..."
+            status_text = f"🧩 Multi-segment ({host})..."
         else:
-            status_text = f"Streaming ({host})..."
+            status_text = f"🌊 Streaming ({host})..."
 
         if idx < len(self.queue_items):
             self.queue_items[idx]["status"] = status_text
             self.queue_table.setItem(idx, 4, QTableWidgetItem(status_text))
             self._schedule_filter()
         
-        if stage == "streaming" or stage == "segmented":
-            self.side_mirror_status.appendPlainText(f"[CONN] {host}")
+        if stage in ("streaming", "segmented"):
+            stage_icon = "🧩" if stage == "segmented" else "⚡"
+            self.side_mirror_status.appendPlainText(f"{stage_icon} [CDN] {host}")
 
     def on_item_status(self, idx, status_text):
         if idx < len(self.queue_items):
@@ -3623,10 +3630,25 @@ class LibgenDialog(QDialog):
     def on_item_progress(self, idx, bytes_read, total_bytes, speed_kb):
         if total_bytes > 0:
             percent = int((bytes_read / total_bytes) * 100)
+            read_mb = bytes_read / (1024 * 1024)
+            tot_mb = total_bytes / (1024 * 1024)
+            rem_bytes = max(0, total_bytes - bytes_read)
+            eta_s = int(rem_bytes / (speed_kb * 1024)) if speed_kb > 0 else 0
+            eta_str = f" • ETA {eta_s}s" if (0 < eta_s < 3600 and percent < 100) else ""
+
+            # Verbose progress label for the table cell
+            cell_label = f"{percent}% ({read_mb:.1f}/{tot_mb:.1f}MB)"
+
             if idx < len(self.queue_items):
                 self.queue_items[idx]["progress"] = percent
-                self._set_queue_item_progress(idx, percent, self.queue_items[idx].get("status", "Downloading"))
-                self.queue_table.setItem(idx, 5, QTableWidgetItem(f"{speed_kb:.1f} KB/s"))
+                self._set_queue_item_progress(
+                    idx,
+                    percent,
+                    self.queue_items[idx].get("status", "Downloading"),
+                    custom_label=cell_label,
+                )
+                speed_icon = "⚡" if speed_kb >= 100 else ("🚀" if speed_kb >= 50 else "📥")
+                self.queue_table.setItem(idx, 5, QTableWidgetItem(f"{speed_icon} {speed_kb:.1f} KB/s"))
             
             if hasattr(self, "session_target_indices") and self.session_target_indices:
                 completed = sum(
@@ -3636,18 +3658,19 @@ class LibgenDialog(QDialog):
                 self.session_completed = completed
                 total = getattr(self, "session_total", len(self.session_target_indices))
                 remaining = max(0, total - completed)
-                self.status_label.setText(f"{completed}/{total} downloaded ({remaining} remaining)")
+                self.status_label.setText(f"📥 {completed}/{total} downloaded ({remaining} remaining) • {read_mb:.1f}/{tot_mb:.1f} MB @ {speed_kb:.1f} KB/s{eta_str}")
                 self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
                 if hasattr(self, "bulk_progress_bar") and total > 0:
                     self.bulk_progress_bar.setVisible(True)
                     self.bulk_progress_bar.setMaximum(total)
                     self.bulk_progress_bar.setValue(completed)
                     pct_tot = int((completed / total) * 100)
-                    self.bulk_progress_bar.setFormat(f"Bulk Download: {completed}/{total} books ({pct_tot}%) • {speed_kb:.1f} KB/s")
+                    self.bulk_progress_bar.setFormat(f"📦 Bulk: {completed}/{total} ({pct_tot}%) • ⚡ {speed_kb:.1f} KB/s ({read_mb:.1f}/{tot_mb:.1f} MB){eta_str}")
             else:
                 downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
                 remaining = max(0, len(self.queue_items) - downloaded)
-                self.status_label.setText(f"{downloaded}/{len(self.queue_items)} downloaded ({remaining} remaining)")
+                self.status_label.setText(f"📥 {downloaded}/{len(self.queue_items)} downloaded ({remaining} remaining) • {read_mb:.1f}/{tot_mb:.1f} MB @ {speed_kb:.1f} KB/s{eta_str}")
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
                 self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
 
     def import_books_to_library(self, file_paths):
@@ -3735,14 +3758,29 @@ class LibgenDialog(QDialog):
 
         fastest_cdns = get_fastest_cdns()
         if fastest_cdns:
-            self.side_mirror_status.appendPlainText("[FASTEST CDNs] " + ", ".join(f"{h} ({s:.1f} KB/s)" for h, s in fastest_cdns[:3]))
+            medals = ["🏆 1st", "🥈 2nd", "🥉 3rd", "4th", "5th"]
+            cdn_ranking_lines = []
+            for i, (h, s) in enumerate(fastest_cdns[:5]):
+                m_tag = medals[i] if i < len(medals) else f"#{i+1}"
+                cdn_ranking_lines.append(f"{m_tag} {h} ({s:.1f} KB/s)")
+            self.side_mirror_status.appendPlainText("━━━━━━━━━━━━━━━")
+            self.side_mirror_status.appendPlainText("🏆 CDN RANKINGS:")
+            for l in cdn_ranking_lines:
+                self.side_mirror_status.appendPlainText(f"  {l}")
 
         cdn_section = ""
         cdn_summary = ""
         if fastest_cdns:
-            cdn_lines = "\n".join(f"    • {h}: {s:.1f} KB/s" for h, s in fastest_cdns[:3])
+            medals = ["🏆", "🥈", "🥉", "4️⃣", "5️⃣"]
+            cdn_lines = "\n".join(
+                f"    {medals[i] if i < len(medals) else '•'} {h}: {s:.1f} KB/s"
+                for i, (h, s) in enumerate(fastest_cdns[:3])
+            )
             cdn_section = f"\n  ⚡ Fastest CDNs:\n{cdn_lines}"
-            cdn_summary = "\n\nFastest CDNs:\n" + "\n".join(f"• {h}: {s:.1f} KB/s" for h, s in fastest_cdns[:3])
+            cdn_summary = "\n\nFastest CDNs:\n" + "\n".join(
+                f"{medals[i] if i < len(medals) else '•'} {h}: {s:.1f} KB/s"
+                for i, (h, s) in enumerate(fastest_cdns[:3])
+            )
 
         # Formatted statistics banner
         stats_box = (
@@ -3759,7 +3797,7 @@ class LibgenDialog(QDialog):
         )
         # Always log stats box to Live Log and side mirror status
         self.append_log(stats_box)
-        self.side_mirror_status.appendPlainText(f"[STATS] {len(downloaded_items)} dl, {size_str} @ {speed_str} in {time_str}")
+        self.side_mirror_status.appendPlainText(f"📊 [SUMMARY] ✓ {len(downloaded_items)} dl • 📦 {size_str} • ⚡ {speed_str} • ⏱ {time_str}")
 
         stats_summary = {
             "time_str": time_str,
