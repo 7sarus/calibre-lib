@@ -925,92 +925,49 @@ class HistorySettingsDialog(QDialog):
         self.accept()
 
 
-class HardcoverShelfDialog(QDialog):
-    """Dialog to fetch user bookshelves/lists from Hardcover.app and populate the bulk download queue."""
+class CsvImportDialog(QDialog):
+    """Dialog to import book lists from CSV/TXT files (Goodreads, StoryGraph, Hardcover, custom) and queue ISBNs/Titles for download."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_dialog = parent
-        self.setWindowTitle("Hardcover Shelf & List Downloader")
-        saved_w = min(880, max(480, int(prefs.get("hardcover_dialog_width", 640))))
-        saved_h = min(680, max(380, int(prefs.get("hardcover_dialog_height", 460))))
+        self.setWindowTitle("Import Books from CSV / TXT File")
+        saved_w = min(880, max(480, int(prefs.get("csv_import_dialog_width", 640))))
+        saved_h = min(680, max(380, int(prefs.get("csv_import_dialog_height", 460))))
         self.resize(saved_w, saved_h)
         self.layout = QVBoxLayout(self)
         self.layout.setSpacing(6)
 
         self.fetched_books = []
-        self.shelves_data = []
-        self._loading_combo = False
 
-        # Top section: Token & Shelves
-        top_group = QGroupBox("Hardcover Authentication & Shelf Selection")
-        top_layout = QVBoxLayout(top_group)
-        top_layout.setSpacing(6)
+        # Top Section: File Selection
+        file_group = QGroupBox("Select CSV or TXT File")
+        file_layout = QHBoxLayout(file_group)
 
-        token_row = QHBoxLayout()
-        token_row.addWidget(QLabel("Token:"))
-        self.token_edit = QLineEdit(self)
-        self.token_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.token_edit.setText(prefs.get("hardcover_token", ""))
-        self.token_edit.setPlaceholderText("Hardcover API token")
-        self.token_edit.setMaximumWidth(220)
-        token_row.addWidget(self.token_edit)
+        self.file_path_edit = QLineEdit(self)
+        self.file_path_edit.setPlaceholderText("Select CSV file (Goodreads, StoryGraph, Hardcover export, or custom list)...")
+        file_layout.addWidget(self.file_path_edit, stretch=3)
 
-        self.fetch_shelves_btn = QPushButton("Refresh Shelves", self)
-        self.fetch_shelves_btn.setStyleSheet("font-weight: bold;")
-        self.fetch_shelves_btn.clicked.connect(lambda: self.on_fetch_shelves(force_refresh=True))
-        token_row.addWidget(self.fetch_shelves_btn)
-        token_row.addStretch(1)
-        top_layout.addLayout(token_row)
+        self.browse_btn = QPushButton("Browse...", self)
+        self.browse_btn.clicked.connect(self.browse_csv_file)
+        file_layout.addWidget(self.browse_btn)
 
-        shelf_row = QHBoxLayout()
-        shelf_row.addWidget(QLabel("Shelf:"))
-        self.shelf_combo = QComboBox(self)
-        self.shelf_combo.addItem("Use Refresh Shelves to load...")
-        self.shelf_combo.currentIndexChanged.connect(self.on_shelf_selected)
-        self.shelf_combo.setMinimumWidth(180)
-        shelf_row.addWidget(self.shelf_combo, stretch=1)
+        self.layout.addWidget(file_group)
 
-        self.load_books_btn = QPushButton("Refresh Books", self)
-        self.load_books_btn.clicked.connect(lambda: self.on_load_books(force_refresh=True))
-        shelf_row.addWidget(self.load_books_btn)
-        top_layout.addLayout(shelf_row)
-
-        # Matching mode
-        match_group = QGroupBox("Queue Matching")
+        # Options Group
+        match_group = QGroupBox("Import Options")
         match_layout = QHBoxLayout(match_group)
-        match_layout.setSpacing(10)
-        self.mode_btn_group = QButtonGroup(self)
-
-        self.isbn_mode_radio = QRadioButton("ISBN only")
-        self.isbn_mode_radio.setToolTip("Use ISBN column only to query LibGen")
-        self.text_mode_radio = QRadioButton("Author + title")
-        self.text_mode_radio.setToolTip("Search LibGen using book title and author")
-        self.mode_btn_group.addButton(self.isbn_mode_radio)
-        self.mode_btn_group.addButton(self.text_mode_radio)
-
-        saved_mode = prefs.get("hardcover_match_mode", "ISBN Only")
-        if saved_mode == "ISBN Only":
-            self.isbn_mode_radio.setChecked(True)
-        else:
-            self.text_mode_radio.setChecked(True)
-
-        self.isbn_mode_radio.toggled.connect(self.on_mode_changed)
-        match_layout.addWidget(self.isbn_mode_radio)
-        match_layout.addWidget(self.text_mode_radio)
 
         self.skip_library_checkbox = QCheckBox("Skip in-library books", self)
-        self.skip_library_checkbox.setToolTip("Checks your Calibre database for matching ISBN or title to avoid duplicate searches")
-        self.skip_library_checkbox.setChecked(bool(prefs.get("hardcover_skip_in_library", True)))
-        self.skip_library_checkbox.stateChanged.connect(lambda v: prefs.__setitem__("hardcover_skip_in_library", bool(v)))
+        self.skip_library_checkbox.setToolTip("Checks your Calibre database for matching ISBN or title to avoid duplicate downloads")
+        self.skip_library_checkbox.setChecked(bool(prefs.get("csv_skip_in_library", True)))
+        self.skip_library_checkbox.stateChanged.connect(lambda v: prefs.__setitem__("csv_skip_in_library", bool(v)))
         match_layout.addWidget(self.skip_library_checkbox)
         match_layout.addStretch(1)
 
-        top_layout.addWidget(match_group)
+        self.layout.addWidget(match_group)
 
-        self.layout.addWidget(top_group)
-
-        # Books Table
+        # Parsed Books Table
         self.books_table = QTableWidget(self)
         self.books_table.setColumnCount(5)
         self.books_table.setHorizontalHeaderLabels([
@@ -1034,24 +991,11 @@ class HardcoverShelfDialog(QDialog):
         self.deselect_all_btn.clicked.connect(self.deselect_all_books)
         btn_row.addWidget(self.deselect_all_btn)
 
-        self.select_first_btn = QPushButton("Select First N", self)
-        self.select_first_btn.setToolTip("Select the top N books from the table based on queue limit")
-        self.select_first_btn.clicked.connect(self.select_first_n_books)
-        btn_row.addWidget(self.select_first_btn)
-
         btn_row.addStretch()
-
-        btn_row.addWidget(QLabel("Max to queue:"))
-        self.max_queue_spin = QSpinBox(self)
-        self.max_queue_spin.setRange(0, 500)
-        self.max_queue_spin.setValue(int(prefs.get("hardcover_max_queue_limit", 10)))
-        self.max_queue_spin.setToolTip("Maximum number of books to query and queue (0 = all selected)")
-        self.max_queue_spin.valueChanged.connect(lambda v: prefs.__setitem__("hardcover_max_queue_limit", v))
-        btn_row.addWidget(self.max_queue_spin)
 
         self.queue_btn = QPushButton("▶ Add to Queue", self)
         self.queue_btn.setStyleSheet(PRIMARY_BUTTON_STYLE)
-        self.queue_btn.setToolTip("Add selected books to the main window's parallel Search Queue")
+        self.queue_btn.setToolTip("Add selected books from CSV to the main window's Search Queue")
         self.queue_btn.clicked.connect(self.on_queue_selected)
         btn_row.addWidget(self.queue_btn)
 
@@ -1062,136 +1006,109 @@ class HardcoverShelfDialog(QDialog):
         self.layout.addLayout(btn_row)
 
         self.restore_state()
-        self.load_cached_shelves()
 
-    def on_mode_changed(self):
-        mode = "ISBN Only" if self.isbn_mode_radio.isChecked() else "Author & Title"
-        prefs["hardcover_match_mode"] = mode
+    def browse_csv_file(self):
+        from qt.core import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select CSV or Text File",
+            os.path.expanduser("~"),
+            "CSV / Text Files (*.csv *.txt *.tsv);;All Files (*)",
+        )
+        if path:
+            self.file_path_edit.setText(path)
+            self.parse_csv_file(path)
 
-    def _hardcover_cache_key(self, token):
-        import hashlib
-        return hashlib.sha256((token or "").encode("utf-8")).hexdigest()[:16]
-
-    def _books_cache_key(self, token, shelf_type, target_id):
-        return f"{self._hardcover_cache_key(token)}:{shelf_type}:{target_id}"
-
-    def _populate_shelves(self, data):
-        self.shelves_data = []
-        self._loading_combo = True
-        self.shelf_combo.clear()
-
-        for s in data.get("shelves", []):
-            self.shelves_data.append(s)
-            self.shelf_combo.addItem(f"📁 Shelf: {s['name']}", s)
-
-        for l in data.get("lists", []):
-            self.shelves_data.append(l)
-            cnt = l.get("books_count", 0)
-            self.shelf_combo.addItem(f"📋 List: {l['name']} ({cnt} books)", l)
-
-        if not self.shelves_data:
-            self.shelf_combo.addItem("No cached shelves")
-        self._loading_combo = False
-
-    def load_cached_shelves(self):
-        token = self.token_edit.text().strip()
-        if not token:
-            return False
-        cache = prefs.get("hardcover_shelves_cache", {})
-        data = cache.get(self._hardcover_cache_key(token)) if isinstance(cache, dict) else None
-        if not data:
-            return False
-        self._populate_shelves(data.get("data", data))
-        self.fetch_shelves_btn.setText("Refresh Shelves")
-        self.on_load_books(force_refresh=False)
-        return True
-
-    def save_cached_shelves(self, token, data):
-        cache = prefs.get("hardcover_shelves_cache", {})
-        if not isinstance(cache, dict):
-            cache = {}
-        cache[self._hardcover_cache_key(token)] = {"saved_at": int(time.time()), "data": data}
-        prefs["hardcover_shelves_cache"] = cache
-
-    def load_cached_books(self, token, shelf_type, target_id):
-        cache = prefs.get("hardcover_books_cache", {})
-        key = self._books_cache_key(token, shelf_type, target_id)
-        entry = cache.get(key) if isinstance(cache, dict) else None
-        if not entry:
-            return False
-        self.fetched_books = entry.get("books", entry) if isinstance(entry, dict) else entry
-        self.populate_books_table()
-        return True
-
-    def save_cached_books(self, token, shelf_type, target_id, books):
-        cache = prefs.get("hardcover_books_cache", {})
-        if not isinstance(cache, dict):
-            cache = {}
-        cache[self._books_cache_key(token, shelf_type, target_id)] = {
-            "saved_at": int(time.time()),
-            "books": books,
-        }
-        prefs["hardcover_books_cache"] = cache
-
-    def on_fetch_shelves(self, force_refresh=False):
-        token = self.token_edit.text().strip()
-        if not token:
-            QMessageBox.warning(self, "Token Required", "Please enter your Hardcover API token.")
+    def parse_csv_file(self, file_path):
+        import csv
+        if not os.path.exists(file_path):
             return
 
-        prefs["hardcover_token"] = token
-        if not force_refresh and self.load_cached_shelves():
-            return
-
-        self.fetch_shelves_btn.setEnabled(False)
-        self.fetch_shelves_btn.setText("Fetching...")
-
+        books = []
         try:
-            data = fetch_user_shelves_and_lists(token)
-            self.save_cached_shelves(token, data)
-            self._populate_shelves(data)
+            with open(file_path, "r", encoding="utf-8-sig", errors="ignore") as f:
+                content = f.read()
+                f.seek(0)
 
-            self.fetch_shelves_btn.setText("Refresh Shelves")
-            self.fetch_shelves_btn.setEnabled(True)
-            self.on_load_books(force_refresh=True)
-        except Exception as e:
-            self.fetch_shelves_btn.setText("Refresh Shelves")
-            self.fetch_shelves_btn.setEnabled(True)
-            QMessageBox.critical(self, "Hardcover Error", f"Failed to fetch shelves:\n{e}")
+                # Support plain text files containing one ISBN or Title per line
+                if not any(sep in content[:500] for sep in [",", "\t", ";"]):
+                    for line in content.splitlines():
+                        clean = line.strip()
+                        if clean and len(clean) >= 3:
+                            isbn_match = re.search(r"\b(97[89]\d{10}|\d{9}[\dX])\b", clean)
+                            isbn = isbn_match.group(1) if isbn_match else ""
+                            books.append({
+                                "title": clean if not isbn else "",
+                                "author": "",
+                                "best_isbn": isbn,
+                                "isbn_13": isbn if len(isbn) == 13 else "",
+                                "isbn_10": isbn if len(isbn) == 10 else "",
+                                "release_year": "",
+                            })
+                else:
+                    sniffer = csv.Sniffer()
+                    dialect = sniffer.sniff(content[:2048]) if content.strip() else csv.excel
+                    reader = csv.reader(content.splitlines(), dialect=dialect)
+                    rows = list(reader)
 
-    def on_shelf_selected(self, idx):
-        if idx >= 0 and not self._loading_combo:
-            self.on_load_books(force_refresh=False)
+                    if not rows:
+                        return
 
-    def on_load_books(self, force_refresh=False):
-        token = self.token_edit.text().strip()
-        if not token or self.shelf_combo.currentIndex() < 0:
-            return
+                    header = [str(c).strip().lower() for c in rows[0]]
+                    has_header = any(h in ["title", "author", "isbn", "isbn13", "isbn10", "book id", "year"] for h in header)
 
-        current_item = self.shelf_combo.currentData()
-        if not current_item or not isinstance(current_item, dict):
-            return
+                    title_col = -1
+                    author_col = -1
+                    isbn_col = -1
+                    year_col = -1
 
-        shelf_type = current_item.get("type", "status")
-        target_id = current_item.get("id", 1)
+                    if has_header:
+                        for idx, h in enumerate(header):
+                            if title_col < 0 and "title" in h:
+                                title_col = idx
+                            elif author_col < 0 and ("author" in h or "creator" in h):
+                                author_col = idx
+                            elif isbn_col < 0 and ("isbn" in h or "identifier" in h):
+                                isbn_col = idx
+                            elif year_col < 0 and ("year" in h or "date" in h or "published" in h):
+                                year_col = idx
+                        data_rows = rows[1:]
+                    else:
+                        data_rows = rows
 
-        if not force_refresh and self.load_cached_books(token, shelf_type, target_id):
-            return
+                    for r in data_rows:
+                        if not r:
+                            continue
+                        row_str = " ".join(r)
+                        isbn_match = re.search(r"\b(97[89]\d{10}|\d{9}[\dX])\b", row_str)
+                        isbn = isbn_match.group(1) if isbn_match else ""
 
-        self.load_books_btn.setEnabled(False)
-        self.load_books_btn.setText("Loading...")
+                        title = r[title_col].strip() if 0 <= title_col < len(r) else ""
+                        author = r[author_col].strip() if 0 <= author_col < len(r) else ""
+                        year = r[year_col].strip() if 0 <= year_col < len(r) else ""
 
-        try:
-            books = fetch_shelf_books(token, shelf_type=shelf_type, target_id=target_id)
-            self.save_cached_books(token, shelf_type, target_id, books)
+                        # If no header matched title/author columns, use first non-ISBN fields
+                        if not title and not author and not isbn:
+                            non_empty = [cell.strip() for cell in r if cell.strip()]
+                            if non_empty:
+                                title = non_empty[0]
+                                if len(non_empty) > 1:
+                                    author = non_empty[1]
+
+                        if title or author or isbn:
+                            books.append({
+                                "title": title,
+                                "author": author,
+                                "best_isbn": isbn,
+                                "isbn_13": isbn if len(isbn) == 13 else "",
+                                "isbn_10": isbn if len(isbn) == 10 else "",
+                                "release_year": year,
+                            })
+
             self.fetched_books = books
             self.populate_books_table()
-            self.load_books_btn.setText("Refresh Books")
-            self.load_books_btn.setEnabled(True)
         except Exception as e:
-            self.load_books_btn.setText("Refresh Books")
-            self.load_books_btn.setEnabled(True)
-            QMessageBox.warning(self, "Load Error", f"Could not load books for shelf:\n{e}")
+            QMessageBox.critical(self, "Parse Error", f"Failed to parse CSV file:\n{e}")
 
     def populate_books_table(self):
         self.books_table.setRowCount(len(self.fetched_books))
@@ -1200,8 +1117,6 @@ class HardcoverShelfDialog(QDialog):
             self.books_table.setItem(row, 1, QTableWidgetItem(b.get("author", "")))
             isbn = b.get("best_isbn") or b.get("isbn_13") or b.get("isbn_10") or ""
             isbn_item = QTableWidgetItem(isbn if isbn else "—")
-            if not isbn:
-                isbn_item.setForeground(self.palette().color(self.foregroundRole()))
             self.books_table.setItem(row, 2, isbn_item)
             self.books_table.setItem(row, 3, QTableWidgetItem(str(b.get("release_year") or "")))
             self.books_table.setItem(row, 4, QTableWidgetItem("Ready"))
@@ -1213,15 +1128,6 @@ class HardcoverShelfDialog(QDialog):
     def deselect_all_books(self):
         self.books_table.clearSelection()
 
-    def select_first_n_books(self):
-        n = self.max_queue_spin.value()
-        if n <= 0:
-            n = 10
-        self.books_table.clearSelection()
-        limit = min(n, self.books_table.rowCount())
-        for r in range(limit):
-            self.books_table.selectRow(r)
-
     def _is_in_library(self, isbn="", title=""):
         try:
             gui = getattr(self.parent_dialog, "gui", None)
@@ -1232,10 +1138,6 @@ class HardcoverShelfDialog(QDialog):
             if isbn and new_api:
                 clean_isbn = isbn.replace("-", "").strip()
                 if clean_isbn and new_api.search(f"isbn:{clean_isbn}"):
-                    return True
-            elif isbn and hasattr(db, "data"):
-                clean_isbn = isbn.replace("-", "").strip()
-                if clean_isbn and db.data.search(f"isbn:{clean_isbn}"):
                     return True
             if title and new_api:
                 clean_t = title.replace('"', '').strip()
@@ -1251,15 +1153,9 @@ class HardcoverShelfDialog(QDialog):
             QMessageBox.information(self, "No Selection", "Please select at least one book from the table.")
             return
 
-        max_limit = self.max_queue_spin.value()
-        if max_limit > 0 and len(selected_rows) > max_limit:
-            selected_rows = selected_rows[:max_limit]
-
-        is_isbn_mode = self.isbn_mode_radio.isChecked()
         skip_library = self.skip_library_checkbox.isChecked()
-
-        # Count how many selected books are already in Calibre library
         in_lib_matches = []
+
         for r in selected_rows:
             if r < len(self.fetched_books):
                 b = self.fetched_books[r]
@@ -1268,7 +1164,6 @@ class HardcoverShelfDialog(QDialog):
                 if self._is_in_library(isbn, title):
                     in_lib_matches.append((r, b))
 
-        # If matching books are found in Calibre, prompt user explicitly
         if in_lib_matches:
             reply = QMessageBox.question(
                 self,
@@ -1283,7 +1178,6 @@ class HardcoverShelfDialog(QDialog):
             skip_library = (reply == QMessageBox.StandardButton.Yes)
 
         added_books = []
-        skipped_no_isbn = 0
         skipped_in_lib = 0
 
         for r in selected_rows:
@@ -1294,11 +1188,6 @@ class HardcoverShelfDialog(QDialog):
             author = b.get("author", "")
             isbn = b.get("best_isbn") or b.get("isbn_13") or b.get("isbn_10") or ""
 
-            if is_isbn_mode and not isbn:
-                skipped_no_isbn += 1
-                self.books_table.setItem(r, 4, QTableWidgetItem("Skipped (No ISBN)"))
-                continue
-
             if skip_library and self._is_in_library(isbn, title):
                 skipped_in_lib += 1
                 self.books_table.setItem(r, 4, QTableWidgetItem("Skipped (In Library)"))
@@ -1307,20 +1196,14 @@ class HardcoverShelfDialog(QDialog):
             rec = {
                 "title": title,
                 "author": author,
-                "isbn": isbn if is_isbn_mode else (isbn or ""),
-                "isbn_only": is_isbn_mode,
+                "isbn": isbn,
                 "year": b.get("release_year") or "",
             }
             added_books.append(rec)
             self.books_table.setItem(r, 4, QTableWidgetItem("✓ In Search Queue"))
 
         if not added_books:
-            msg = "No books were added to Search Queue."
-            if skipped_in_lib:
-                msg += f"\n• {skipped_in_lib} book(s) already in Calibre library."
-            if skipped_no_isbn:
-                msg += f"\n• {skipped_no_isbn} book(s) lacked an ISBN."
-            QMessageBox.information(self, "No Books Queued", msg)
+            QMessageBox.information(self, "No Books Queued", "No new books were added to Search Queue (all selected books already exist in Calibre library).")
             return
 
         if self.parent_dialog:
@@ -1343,20 +1226,18 @@ class HardcoverShelfDialog(QDialog):
                 self.parent_dialog.update_search_queue_bar()
 
             self.parent_dialog.status_label.setText(
-                f"Loaded {len(self.parent_dialog.selected_books)} record(s) into Search Queue ({new_count} new from Hardcover)."
+                f"Loaded {len(self.parent_dialog.selected_books)} record(s) into Search Queue ({new_count} new from CSV)."
             )
 
         summary_msg = f"✓ Added {len(added_books)} book(s) to the Search Queue."
         if skipped_in_lib:
             summary_msg += f"\n• Skipped {skipped_in_lib} book(s) already in Calibre library."
-        if skipped_no_isbn:
-            summary_msg += f"\n• Skipped {skipped_no_isbn} book(s) with no ISBN."
 
-        QMessageBox.information(self, "Hardcover Search Queue", summary_msg)
+        QMessageBox.information(self, "CSV Search Queue", summary_msg)
         self.accept()
 
     def restore_state(self):
-        state_hex = prefs.get("hardcover_books_table_header", "")
+        state_hex = prefs.get("csv_import_table_header", "")
         if state_hex:
             try:
                 self.books_table.horizontalHeader().restoreState(QByteArray.fromHex(state_hex.encode("ascii")))
@@ -1703,11 +1584,11 @@ class LibgenDialog(QDialog):
         adv_row1 = QHBoxLayout()
         adv_row1.setSpacing(8)
 
-        self.hardcover_btn = QPushButton("📚 Hardcover", self)
-        self.hardcover_btn.setToolTip("Import and queue books from your Hardcover.app shelves / lists")
-        self.hardcover_btn.setStyleSheet(COMPACT_BUTTON_STYLE)
-        self.hardcover_btn.clicked.connect(self.open_hardcover_dialog)
-        adv_row1.addWidget(self.hardcover_btn)
+        self.import_csv_btn = QPushButton("📄 Import CSV / List", self)
+        self.import_csv_btn.setToolTip("Import books from Goodreads, StoryGraph, Hardcover, or custom CSV/TXT files containing ISBNs, Titles, and Authors")
+        self.import_csv_btn.setStyleSheet(COMPACT_BUTTON_STYLE)
+        self.import_csv_btn.clicked.connect(self.open_csv_import_dialog)
+        adv_row1.addWidget(self.import_csv_btn)
 
         self.field_label = QLabel("Field:")
         adv_row1.addWidget(self.field_label)

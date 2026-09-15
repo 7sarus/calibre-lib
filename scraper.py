@@ -1305,6 +1305,23 @@ class LibgenScraper:
         In fast_mode: uses 3s probe timeout and skips directly to failed list without long fallback chains.
         """
 
+        # Check if detail_url is already a direct Bookracy download link
+        if detail_url and "api.bookracy.com" in detail_url:
+            if log_callback:
+                log_callback(f"⚡ Direct Bookracy stream: downloading \"{book_title or 'Book'}\" via Bookracy...")
+            if link_callback:
+                link_callback(detail_url, "streaming")
+            self.download_file(
+                detail_url,
+                destination_path,
+                progress_callback=progress_callback,
+                abort_check=abort_check,
+                referer="https://bookracy.com/",
+            )
+            if log_callback:
+                log_callback("✓ Download completed successfully via Bookracy.")
+            return destination_path, ""
+
         if force_bookracy:
             if log_callback:
                 log_callback(f"⚡ Force Bookracy: resolving \"{book_title or 'Book'}\" directly via Bookracy...")
