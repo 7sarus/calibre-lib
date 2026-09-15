@@ -722,18 +722,19 @@ class LibgenScraper:
         import mechanize
         b = self._get_browser()
         parsed_dl = urlparse(download_url)
-        ref_header = referer or f"{parsed_dl.scheme}://{parsed_dl.netloc}/"
-        req = mechanize.Request(
-            download_url,
-            headers={
-                "User-Agent": self.USER_AGENT,
-                "Connection": "keep-alive",
-                "Referer": ref_header,
-                "Accept": "*/*",
-                "Accept-Encoding": "identity",
-            },
-        )
-        dl_timeout = max(self.timeout * 3, 60) if "api.bookracy.com" in download_url else self.timeout * 3
+        is_bookracy = "api.bookracy.com" in download_url
+        headers = {
+            "User-Agent": self.USER_AGENT,
+            "Connection": "keep-alive",
+            "Referer": referer or ("https://bookracy.com/" if is_bookracy else f"{parsed_dl.scheme}://{parsed_dl.netloc}/"),
+            "Accept": "application/json, */*" if is_bookracy else "*/*",
+            "Accept-Encoding": "identity",
+        }
+        if is_bookracy:
+            headers["Origin"] = "https://bookracy.com"
+
+        req = mechanize.Request(download_url, headers=headers)
+        dl_timeout = max(self.timeout * 3, 60) if is_bookracy else self.timeout * 3
         with self._open_url(b, req, timeout=dl_timeout) as resp:
             total_bytes = 0
             try:
