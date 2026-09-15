@@ -1891,6 +1891,16 @@ class LibgenDialog(QDialog):
         self.discard_selected_results_btn.clicked.connect(self.discard_selected_results)
         btn_bar.addWidget(self.discard_selected_results_btn)
 
+        self.dedupe_results_btn = QPushButton("Remove Duplicates", self)
+        self.dedupe_results_btn.setToolTip("Remove duplicate books from search results (matching detail URL, MD5, or title/format)")
+        self.dedupe_results_btn.clicked.connect(self.dedupe_search_results)
+        btn_bar.addWidget(self.dedupe_results_btn)
+
+        self.clear_results_btn = QPushButton("Clear Results", self)
+        self.clear_results_btn.setToolTip("Clear all search results")
+        self.clear_results_btn.clicked.connect(self.clear_search_results)
+        btn_bar.addWidget(self.clear_results_btn)
+
         btn_bar.addStretch()
 
         self.queue_selected_btn = QPushButton("Add to Queue", self)
@@ -1992,6 +2002,11 @@ class LibgenDialog(QDialog):
         self.clear_queue_btn = QPushButton("Clear Queue", self)
         self.clear_queue_btn.clicked.connect(self.clear_queue)
         q_row1.addWidget(self.clear_queue_btn)
+
+        self.dedupe_queue_btn = QPushButton("Remove Duplicates", self)
+        self.dedupe_queue_btn.setToolTip("Remove duplicate items from download queue (matching detail URL, MD5, or title/author)")
+        self.dedupe_queue_btn.clicked.connect(self.dedupe_download_queue)
+        q_row1.addWidget(self.dedupe_queue_btn)
 
         self.retry_failed_btn = QPushButton("Retry Failed", self)
         self.retry_failed_btn.setStyleSheet(COMPACT_BUTTON_STYLE)
@@ -2898,8 +2913,91 @@ class LibgenDialog(QDialog):
     def select_all_results(self):
         self.results_table.selectAll()
 
-    def deselect_all_results(self):
-        self.results_table.clearSelection()
+    def clear_search_results(self):
+        if not self.search_results:
+            return
+        cnt = len(self.search_results)
+        self.search_results.clear()
+        self.populate_results_table()
+        self.set_tab_text_for_widget(getattr(self, "tab_results", None), "Search Results (0)")
+        self.status_label.setText(f"Cleared {cnt} search result(s).")
+        self.append_log(f"[CLEANUP] Cleared {cnt} search result(s).")
+
+    def dedupe_search_results(self):
+        if not self.search_results:
+            QMessageBox.information(self, "No Search Results", "Search results table is currently empty.")
+            return
+
+        initial_cnt = len(self.search_results)
+        unique_list = []
+        seen_keys = set()
+
+        for book in self.search_results:
+            key = None
+            if getattr(book, "detail_url", None):
+                key = ("url", book.detail_url)
+            elif getattr(book, "md5", None):
+                key = ("md5", book.md5.lower())
+            else:
+                norm_title = re.sub(r"\W+", "", (book.title or "").lower())
+                norm_author = re.sub(r"\W+", "", (book.author or "").lower())
+                key = ("norm", norm_title, norm_author, (book.extension or "").lower())
+
+            if key not in seen_keys:
+                seen_keys.add(key)
+                unique_list.append(book)
+
+        removed_cnt = initial_cnt - len(unique_list)
+        self.search_results = unique_list
+        self.populate_results_table()
+        self.set_tab_text_for_widget(getattr(self, "tab_results", None), f"Search Results ({len(self.search_results)})")
+
+        msg = f"✓ Removed {removed_cnt} duplicate search result(s). ({len(unique_list)} unique remaining)" if removed_cnt > 0 else "No duplicates found in search results."
+        self.status_label.setText(msg)
+        self.append_log(f"[CLEANUP] {msg}")
+        if hasattr(self, "toast"):
+            self.toast.show_toast(msg)
+
+    def dedupe_download_queue(self):
+        if hasattr(self, 'download_worker') and self.download_worker and self.download_worker.isRunning():
+            QMessageBox.warning(self, "Download in Progress", "Please wait or stop the current download before modifying the queue.")
+            return
+
+        if not self.queue_items:
+            QMessageBox.information(self, "Empty Queue", "Download queue is currently empty.")
+            return
+
+        initial_cnt = len(self.queue_items)
+        unique_queue = []
+        seen_keys = set()
+
+        for q in self.queue_items:
+            book = q.get("book")
+            if not book:
+                continue
+            key = None
+            if getattr(book, "detail_url", None):
+                key = ("url", book.detail_url)
+            elif getattr(book, "md5", None):
+                key = ("md5", book.md5.lower())
+            else:
+                norm_title = re.sub(r"\W+", "", (book.title or "").lower())
+                norm_author = re.sub(r"\W+", "", (book.author or "").lower())
+                key = ("norm", norm_title, norm_author, (book.extension or "").lower())
+
+            if key not in seen_keys:
+                seen_keys.add(key)
+                unique_queue.append(q)
+
+        removed_cnt = initial_cnt - len(unique_queue)
+        self.queue_items = unique_queue
+        self.update_queue_table()
+
+        msg = f"✓ Removed {removed_cnt} duplicate item(s) from Queue. ({len(unique_queue)} remaining)" if removed_cnt > 0 else "No duplicates found in download queue."
+        self.status_label.setText(msg)
+        self.append_log(f"[CLEANUP] {msg}")
+        if hasattr(self, "toast"):
+            self.toast.show_toast(msg)
 
     def discard_selected_results(self):
         selected_rows = set(self.get_selected_result_rows())
