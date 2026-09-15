@@ -1724,20 +1724,39 @@ class BookracyProvider:
         force_bookracy=False,
         allow_bookracy=True,
     ):
+        target_url = detail_url
+        cover_url = ""
+
+        if not target_url or "api.bookracy.com" not in target_url:
+            cur_md5_match = _RE_MD5.search(detail_url) if detail_url else None
+            cur_md5 = cur_md5_match.group(1) if cur_md5_match else None
+            target_url, cover_url = self.scraper._find_bookracy_fallback(
+                cur_md5, book_title, author=book_author, ext=book_ext, log_callback=log_callback
+            )
+
+        if not target_url:
+            raise Exception("Bookracy stream link unavailable for this title")
+
         if link_callback:
-            link_callback(detail_url, "streaming")
+            link_callback(target_url, "streaming")
         if log_callback:
-            log_callback(f"Streaming from Bookracy: {detail_url[:60]}...")
-        self.scraper.download_file(
-            detail_url,
-            destination_path,
-            progress_callback=progress_callback,
-            abort_check=abort_check,
-            referer="https://bookracy.com/",
-        )
-        if log_callback:
-            log_callback("✓ Download completed via Bookracy.")
-        return destination_path, ""
+            log_callback(f"⚡ Streaming from Bookracy: {book_title or 'Book'}...")
+
+        try:
+            self.scraper.download_file(
+                target_url,
+                destination_path,
+                progress_callback=progress_callback,
+                abort_check=abort_check,
+                referer="https://bookracy.com/",
+            )
+            if log_callback:
+                log_callback("✓ Download completed successfully via Bookracy.")
+            return destination_path, cover_url
+        except Exception as err:
+            if log_callback:
+                log_callback(f"✗ Bookracy download error: {err}")
+            raise Exception(f"Bookracy stream failed ({err})")
 
     def ping_mirror(self, mirror_url=None, timeout=8):
         return self.scraper.ping_mirror(self.MIRROR_URL, timeout=timeout)
