@@ -963,6 +963,17 @@ class CsvImportDialog(QDialog):
         self.skip_library_checkbox.setChecked(bool(prefs.get("csv_skip_in_library", True)))
         self.skip_library_checkbox.stateChanged.connect(lambda v: prefs.__setitem__("csv_skip_in_library", bool(v)))
         match_layout.addWidget(self.skip_library_checkbox)
+
+        self.status_filter_label = QLabel("Filter Status:", self)
+        self.status_filter_label.setVisible(False)
+        match_layout.addWidget(self.status_filter_label)
+
+        self.status_filter_combo = QComboBox(self)
+        self.status_filter_combo.addItem("All Statuses")
+        self.status_filter_combo.setVisible(False)
+        self.status_filter_combo.currentIndexChanged.connect(lambda _: self.apply_status_filter())
+        match_layout.addWidget(self.status_filter_combo)
+
         match_layout.addStretch(1)
 
         self.layout.addWidget(match_group)
@@ -1025,6 +1036,7 @@ class CsvImportDialog(QDialog):
             return
 
         books = []
+        statuses = set()
         try:
             with open(file_path, "r", encoding="utf-8-sig", errors="ignore") as f:
                 content = f.read()
@@ -1044,6 +1056,7 @@ class CsvImportDialog(QDialog):
                                 "isbn_13": isbn if len(isbn) == 13 else "",
                                 "isbn_10": isbn if len(isbn) == 10 else "",
                                 "release_year": "",
+                                "csv_status": "",
                             })
                 else:
                     sniffer = csv.Sniffer()
@@ -1055,12 +1068,13 @@ class CsvImportDialog(QDialog):
                         return
 
                     header = [str(c).strip().lower() for c in rows[0]]
-                    has_header = any(h in ["title", "author", "isbn", "isbn13", "isbn10", "book id", "year"] for h in header)
+                    has_header = any(h in ["title", "author", "isbn", "isbn13", "isbn10", "book id", "year", "status", "exclusive shelf", "shelf", "read status"] for h in header)
 
                     title_col = -1
                     author_col = -1
                     isbn_col = -1
                     year_col = -1
+                    status_col = -1
 
                     if has_header:
                         for idx, h in enumerate(header):
@@ -1072,6 +1086,8 @@ class CsvImportDialog(QDialog):
                                 isbn_col = idx
                             elif year_col < 0 and ("year" in h or "date" in h or "published" in h):
                                 year_col = idx
+                            elif status_col < 0 and ("status" in h or "shelf" in h or "state" in h):
+                                status_col = idx
                         data_rows = rows[1:]
                     else:
                         data_rows = rows
@@ -1086,6 +1102,10 @@ class CsvImportDialog(QDialog):
                         title = r[title_col].strip() if 0 <= title_col < len(r) else ""
                         author = r[author_col].strip() if 0 <= author_col < len(r) else ""
                         year = r[year_col].strip() if 0 <= year_col < len(r) else ""
+                        csv_status = r[status_col].strip() if 0 <= status_col < len(r) else ""
+
+                        if csv_status:
+                            statuses.add(csv_status)
 
                         # If no header matched title/author columns, use first non-ISBN fields
                         if not title and not author and not isbn:
@@ -1103,12 +1123,39 @@ class CsvImportDialog(QDialog):
                                 "isbn_13": isbn if len(isbn) == 13 else "",
                                 "isbn_10": isbn if len(isbn) == 10 else "",
                                 "release_year": year,
+                                "csv_status": csv_status,
                             })
 
             self.fetched_books = books
+            self.setup_status_filter(statuses)
             self.populate_books_table()
         except Exception as e:
             QMessageBox.critical(self, "Parse Error", f"Failed to parse CSV file:\n{e}")
+
+    def setup_status_filter(self, statuses):
+        self.status_filter_combo.blockSignals(True)
+        self.status_filter_combo.clear()
+        self.status_filter_combo.addItem("All Statuses")
+        if statuses:
+            for s in sorted(statuses):
+                self.status_filter_combo.addItem(s)
+            self.status_filter_label.setVisible(True)
+            self.status_filter_combo.setVisible(True)
+        else:
+            self.status_filter_label.setVisible(False)
+            self.status_filter_combo.setVisible(False)
+        self.status_filter_combo.blockSignals(False)
+
+    def apply_status_filter(self):
+        selected_status = self.status_filter_combo.currentText()
+        for row in range(self.books_table.rowCount()):
+            if row < len(self.fetched_books):
+                b = self.fetched_books[row]
+                b_status = b.get("csv_status", "")
+                if selected_status == "All Statuses" or b_status == selected_status:
+                    self.books_table.setRowHidden(row, False)
+                else:
+                    self.books_table.setRowHidden(row, True)
 
     def populate_books_table(self):
         self.books_table.setRowCount(len(self.fetched_books))
@@ -1152,9 +1199,10 @@ class CsvImportDialog(QDialog):
         return False
 
     def on_queue_selected(self):
-        selected_rows = sorted(set(idx.row() for idx in self.books_table.selectedIndexes()))
+        all_selected = sorted(set(idx.row() for idx in self.books_table.selectedIndexes()))
+        selected_rows = [r for r in all_selected if not self.books_table.isRowHidden(r)]
         if not selected_rows:
-            QMessageBox.information(self, "No Selection", "Please select at least one book from the table.")
+            QMessageBox.information(self, "No Selection", "Please select at least one visible book from the table.")
             return
 
         skip_library = self.skip_library_checkbox.isChecked()
