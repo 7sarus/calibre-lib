@@ -317,7 +317,10 @@ class LibgenScraper:
                         if not winning_mirror:
                             winning_mirror = mirror
                             try:
-                                from calibre_plugins.libgen_store.config import record_successful_mirror
+                                try:
+                                    from calibre_plugins.libgen_store.config import record_successful_mirror
+                                except (ImportError, ModuleNotFoundError):
+                                    from config import record_successful_mirror
                                 record_successful_mirror(mirror)
                             except Exception:
                                 pass
@@ -1139,7 +1142,10 @@ class LibgenScraper:
                 log_callback(f"✓ Reassembled complete file ({final_size:,} bytes) across {num_segments} mirrors.")
 
             try:
-                from calibre_plugins.libgen_store.config import record_successful_mirror
+                try:
+                    from calibre_plugins.libgen_store.config import record_successful_mirror
+                except (ImportError, ModuleNotFoundError):
+                    from config import record_successful_mirror
                 for s in ranked_sources[:num_segments]:
                     record_successful_mirror(f"https://{s['host']}")
             except Exception:
@@ -1447,7 +1453,10 @@ class LibgenScraper:
                     if log_callback:
                         log_callback(f"✓ Download completed successfully via {host}.")
                     try:
-                        from calibre_plugins.libgen_store.config import record_successful_mirror
+                        try:
+                            from calibre_plugins.libgen_store.config import record_successful_mirror
+                        except (ImportError, ModuleNotFoundError):
+                            from config import record_successful_mirror
                         record_successful_mirror(f"https://{host}")
                     except Exception:
                         pass
@@ -1519,7 +1528,10 @@ class LibgenScraper:
                 if log_callback:
                     log_callback(f"✓ Download completed successfully via {host}.")
                 try:
-                    from calibre_plugins.libgen_store.config import record_successful_mirror
+                    try:
+                        from calibre_plugins.libgen_store.config import record_successful_mirror
+                    except (ImportError, ModuleNotFoundError):
+                        from config import record_successful_mirror
                     record_successful_mirror(f"https://{host}")
                 except Exception:
                     pass
