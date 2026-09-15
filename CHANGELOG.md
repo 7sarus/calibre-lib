@@ -1,7 +1,18 @@
 # Changelog
 
-## [v1.11b] - 2026-09-15
+## [Unreleased] (since v1.11b-78)
 
+- **Bookracy Search Provider:** Added support for https://bookracy.com as an optional source queried concurrently with LibGen mirrors.
+- **Dual-Stage Failover Retry:** When all LibGen mirrors fail to download a book, automatically queries Bookracy with exact MD5 match first, then falls back to Title + Author query with format matching.
+- **"Retry with Bookracy" Queue Action:** Instant one-click button in the Queue tab to retry failed or pending downloads directly through Bookracy.
+- **Live "Bookracy Fallback" Toggle:** Checkbox directly in the Queue toolbar to toggle automatic Bookracy failover on the fly.
+- **Isolated Settings Section:** Standalone "Bookracy Provider & Fallback" group box in Preferences to keep Bookracy configuration strictly separated from LibGen mirrors.
+
+## [v1.11b-78] - 2026-09-15
+
+- **Hardcover Reading List & Shelf Downloader:** Directly sync personal reading lists and shelves ("Want to Read", "Currently Reading", custom lists) via Hardcover.app API token. Includes automatic skipping of books already in your Calibre library, ISBN matching, and one-click queue staging.
+- **Search Selected Calibre Book Records:** Select one or multiple books in your Calibre library and click "Search Record(s)" to initiate an automated serialized search queue across mirrors without typing queries.
+- **Configurable Download Concurrency & 512 KB Buffer:** New UI spinbox for concurrent file downloads (1–4), defaulted to 1 to maximize bandwidth concentration and defeat CDN rate-limiting, backed by quadrupled 512 KB transfer buffers.
 - **Streamlined Top Search Bar:** Clean primary row with search input, format, language, search, and Hardcover; secondary parameters tucked into an expandable `[⚙ Filters ▾]` drawer that persists its state across sessions.
 - **Modern Vector Progress Bars & Verbose Metrics:** Replaced retro ASCII bars with native `ProgressBarDelegate` rendering smooth rounded progress bars showing detailed bytes transferred (`MB / MB`), live speed icons (`⚡`, `🚀`, `📥`), and ETA countdowns.
 - **Dedicated Bulk Download Progress Bar:** Added an overall session progress bar in the Queue tab showing batch completion (`X / Y books (Z%)`), speed, and ETA.
