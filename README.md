@@ -144,16 +144,11 @@ Join our community for discussions, feature requests, mirror health updates, and
 ## 📦 Releases & Version History
 
 - **[v1.50 (Latest Release)](https://github.com/7sarus/calibre-lib/releases)**:
-  - **Hardcover Reading Lists**: Sync personal reading lists and shelves ("Want to Read", "Currently Reading", custom lists) via Hardcover.app API token with automatic library duplicate skipping.
-  - **Search Existing Calibre Records**: Highlight books in Calibre and batch-search working mirrors without manual typing.
+  - **Hardcover Reading Lists**: Sync "Want to Read" and custom shelves straight into your download queue with automatic duplicate detection.
+  - **Search Existing Library Books**: Highlight books in Calibre and batch-search working mirrors without manual typing.
   - **Optimized Download Speeds**: 512 KB streaming buffers, smart connection limits, and automatic Cloudflare 503 bypasses for reliable transfers.
-  - **Modernized UI & Live Metrics**: Real-time speed tiers, exact MB transferred, ETA countdowns, movable tabs, and live CDN status ranking.
-  - **Reorderable Tabs & Queue Segmentation**: Drag-and-drop movable tabs with order persistence, and segregated queue views (`Queued`, `Downloading`, `Downloaded`, `Failed`).
-  - **Table Column Width Persistence**: Restores `results_table`, `queue_table`, and `mirrors_table` column widths across restarts via Qt header state hex serialization.
-  - **Pending / Zero-Result Searches**: Dropdown tracker that captures zero-result queries for one-click re-searching.
-  - **Multi-Language Selector**: Checkable language combobox with compact short code badges.
-  - **Fast Mode (⚡)**: Quick 3s mirror probe that skips dead/unresponsive downloads directly to Failed queue for alternate mirror retrying.
-  - **Discard Dead Mirrors**: Clean up unreachable mirrors from configuration after latency/bandwidth tests.
+  - **Modernized UI & Live Metrics**: Real-time speed tiers, exact MB transferred, ETA countdowns, and movable tabs.
+  - **Instant Mirror Failover**: Automatic fallback to fastest responsive mirrors with live latency indicators.
 - **[v1.0.1 "Godzila" (Hotfix)](https://github.com/7sarus/calibre-lib/releases/tag/v1.0.1)**:
   - Fixed silent download and resolution failures across newer mirrors (`.li`, `.vg`, `.la`) due to anti-scraping checks.
   - Smooth animated cover preview text spinner (`⠋ 📖`) while covers load.
