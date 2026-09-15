@@ -140,7 +140,7 @@ try:
         remove_pending_search,
         clear_pending_searches,
     )
-    from calibre_plugins.libgen_store.scraper import LibgenScraper, LibgenBook
+    from calibre_plugins.libgen_store.scraper import LibgenScraper, LibgenBook, get_scraper
 except (ImportError, ModuleNotFoundError):
     from config import (
         prefs,
@@ -170,7 +170,7 @@ except (ImportError, ModuleNotFoundError):
         remove_pending_search,
         clear_pending_searches,
     )
-    from scraper import LibgenScraper, LibgenBook
+    from scraper import LibgenScraper, LibgenBook, get_scraper
 
 try:
     from calibre_plugins.libgen_store.hardcover import (
@@ -350,7 +350,7 @@ class SearchWorker(QThread):
             mirrors = get_mirrors()
             timeout = int(prefs.get("search_timeout", 8))
 
-            scraper = LibgenScraper(mirrors=mirrors, timeout=timeout)
+            scraper = get_scraper(mirrors=mirrors, timeout=timeout)
 
             def on_progress(idx, total, mirror, found_count=0, target_count=0):
                 self._current_mirror = mirror
@@ -733,7 +733,7 @@ class BulkDownloadWorker(QThread):
     def run(self):
         mirrors = get_mirrors()
         timeout = int(prefs.get("timeout", 20))
-        scraper = LibgenScraper(mirrors=mirrors, timeout=timeout)
+        scraper = get_scraper(mirrors=mirrors, timeout=timeout)
 
         download_dir = self.download_dir or prefs.get("download_directory", "")
         if not download_dir:
@@ -2130,10 +2130,12 @@ class LibgenDialog(QDialog):
         self.neko_frame_idx = 0
         self.neko_timer.start(400)
 
-        # Version Badge in Status Bar (Click 3x to toggle hidden download stats)
+        # Version Badge in Status Bar (Click 3x to toggle hidden download stats, Right-click for API Backend selection)
         self.version_badge = QLabel(PLUGIN_VERSION_STR, self)
         self.version_badge.setCursor(Qt.CursorShape.PointingHandCursor)
         self.version_badge.mousePressEvent = self.on_version_badge_clicked
+        self.version_badge.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.version_badge.customContextMenuRequested.connect(self.show_backend_context_menu)
         self._update_version_badge_style()
         status_bar.addWidget(self.version_badge)
 
@@ -2297,7 +2299,39 @@ class LibgenDialog(QDialog):
             self.version_badge.setStyleSheet(
                 "color: palette(text); font-size: 11px; padding: 2px 6px; background: palette(base); border: 1px solid palette(mid); border-radius: 3px;"
             )
-            self.version_badge.setToolTip("Version info (Click 3x to toggle cats & stats)")
+            self.version_badge.setToolTip("Version info (Click 3x for cats/stats | Right-click for Backend)")
+
+    def show_backend_context_menu(self, pos):
+        from qt.core import QMenu, QAction
+        menu = QMenu(self)
+        menu.setTitle("⚡ API Backend Selection")
+
+        try:
+            from calibre_plugins.libgen_store.config import get_active_backend, BACKENDS
+        except Exception:
+            from config import get_active_backend, BACKENDS
+
+        cur_backend = get_active_backend()
+
+        for code, label in BACKENDS.items():
+            action = QAction(label, menu)
+            action.setCheckable(True)
+            action.setChecked(code == cur_backend)
+            action.triggered.connect(lambda checked, b=code, title=label: self.switch_api_backend(b, title))
+            menu.addAction(action)
+
+        menu.exec(self.version_badge.mapToGlobal(pos))
+
+    def switch_api_backend(self, backend_code, title):
+        try:
+            from calibre_plugins.libgen_store.config import set_active_backend
+        except Exception:
+            from config import set_active_backend
+        set_active_backend(backend_code)
+        self.update_mirror_combobox()
+        self.append_log(f"[CONFIG] Switched active API backend to: {title}")
+        if hasattr(self, "toast"):
+            self.toast.show_toast(f"⚡ Backend: {title}")
 
     def manual_fetch_mirrors(self):
         self.fetch_mirrors_btn.setEnabled(False)

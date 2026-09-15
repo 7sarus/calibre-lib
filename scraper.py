@@ -1455,3 +1455,158 @@ class LibgenScraper:
             err = str(e)
             status_msg = "Timed out" if "timed out" in err.lower() else f"Error: {err[:30]}"
             return False, latency, 0.0, "0 KB/s", status_msg
+
+
+class BookracyProvider:
+    """
+    Dedicated provider for Bookracy (api.bookracy.com).
+    Handles structured JSON search and direct streaming downloads.
+    """
+    MIRROR_URL = "https://api.bookracy.com"
+
+    def __init__(self, timeout=20):
+        self.timeout = timeout
+        self.scraper = LibgenScraper(mirrors=[self.MIRROR_URL], timeout=timeout)
+
+    def search(
+        self,
+        query,
+        field="",
+        category="",
+        max_results=5,
+        preferred_language="Any",
+        preferred_format="Any",
+        filter_mode="Prioritize",
+        unique_results=True,
+        progress_callback=None,
+        abort_check=None,
+        partial_results_callback=None,
+    ):
+        import json
+        if not query or not query.strip():
+            return []
+
+        search_url = f"{self.MIRROR_URL}/api/books?query={quote_plus(query.strip())}&limit={max_results * 4}&page=1&lang=all"
+        b = self.scraper._get_browser()
+        b.addheaders = [
+            ("User-Agent", self.scraper.USER_AGENT),
+            ("Accept", "application/json"),
+            ("Origin", "https://bookracy.com"),
+            ("Referer", "https://bookracy.com/"),
+        ]
+
+        if progress_callback:
+            progress_callback("Connecting to Bookracy API...")
+
+        try:
+            with self.scraper._open_url(b, search_url, timeout=self.timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                raw_books = self.scraper._parse_bookracy_json(data)
+        except Exception as e:
+            if progress_callback:
+                progress_callback(f"Bookracy error: {e}")
+            return []
+
+        filtered = self.scraper._filter_and_rank(raw_books, preferred_language, preferred_format, filter_mode, query)
+        if unique_results:
+            filtered = self.scraper.deduplicate_books(filtered)
+        results = filtered[:max_results]
+        if partial_results_callback and results:
+            partial_results_callback(results, self.MIRROR_URL)
+        return results
+
+    def resolve_details(self, detail_url, timeout=None):
+        return detail_url, ""
+
+    def resolve_and_download(
+        self,
+        detail_url,
+        destination_path,
+        book_title=None,
+        book_author=None,
+        book_ext=None,
+        log_callback=None,
+        progress_callback=None,
+        link_callback=None,
+        abort_check=None,
+        fast_mode=False,
+        force_bookracy=False,
+        allow_bookracy=True,
+    ):
+        if link_callback:
+            link_callback(detail_url, "streaming")
+        if log_callback:
+            log_callback(f"Streaming from Bookracy: {detail_url[:60]}...")
+        self.scraper.download_file(
+            detail_url,
+            destination_path,
+            progress_callback=progress_callback,
+            abort_check=abort_check,
+            referer="https://bookracy.com/",
+        )
+        if log_callback:
+            log_callback("✓ Download completed via Bookracy.")
+        return destination_path, ""
+
+    def ping_mirror(self, mirror_url=None, timeout=8):
+        return self.scraper.ping_mirror(self.MIRROR_URL, timeout=timeout)
+
+
+class DualEngineProvider:
+    """
+    Aggregates LibGen mirrors with automatic Bookracy fallback.
+    """
+    def __init__(self, mirrors=None, timeout=20):
+        self.timeout = timeout
+        self.libgen = LibgenScraper(mirrors=mirrors, timeout=timeout)
+        self.bookracy = BookracyProvider(timeout=timeout)
+
+    def search(self, query, **kwargs):
+        results = self.libgen.search(query, **kwargs)
+        if not results:
+            cb = kwargs.get("log_callback") or kwargs.get("progress_callback")
+            if cb:
+                cb("LibGen returned 0 results. Fallback searching Bookracy...")
+            results = self.bookracy.search(query, **kwargs)
+        return results
+
+    def resolve_and_download(self, detail_url, destination_path, **kwargs):
+        try:
+            return self.libgen.resolve_and_download(detail_url, destination_path, **kwargs)
+        except Exception as e:
+            cb = kwargs.get("log_callback")
+            if cb:
+                cb(f"LibGen download failed ({e}). Retrying via Bookracy...")
+            br_url, br_cover = self.libgen._find_bookracy_fallback(
+                None, kwargs.get("book_title"), kwargs.get("book_author"), kwargs.get("book_ext"), cb
+            )
+            if br_url:
+                return self.bookracy.resolve_and_download(br_url, destination_path, **kwargs)
+            raise e
+
+    def ping_mirror(self, mirror_url=None, timeout=8):
+        return self.libgen.ping_mirror(mirror_url or "https://libgen.li", timeout=timeout)
+
+
+def get_scraper(backend=None, mirrors=None, timeout=20):
+    """
+    Factory function returning the active scraper provider based on backend setting:
+    'libgen', 'bookracy', or 'dual'.
+    """
+    if not backend:
+        try:
+            from calibre_plugins.libgen_store.config import get_active_backend
+            backend = get_active_backend()
+        except Exception:
+            try:
+                from config import get_active_backend
+                backend = get_active_backend()
+            except Exception:
+                backend = "libgen"
+
+    if backend == "bookracy":
+        return BookracyProvider(timeout=timeout)
+    elif backend == "dual":
+        return DualEngineProvider(mirrors=mirrors, timeout=timeout)
+    else:
+        return LibgenScraper(mirrors=mirrors, timeout=timeout)

@@ -71,6 +71,7 @@ DEFAULT_FALLBACK_MIRRORS = (
     "https://libgen.la",
 )
 _VALID_MIRROR_RE = re.compile(r"^https?://(?:www\.)?libgen\.[a-z]{2,}(?::\d+)?/?$", re.IGNORECASE)
+_VALID_MIRROR_RE = re.compile(r"^https?://(?:(?:www\.)?libgen\.[a-z]{2,}|api\.bookracy\.com)(?::\d+)?/?$", re.IGNORECASE)
 
 
 def normalize_mirror_url(url):
@@ -107,6 +108,21 @@ prefs.defaults["unique_results"] = True
 prefs.defaults["fast_mode"] = False
 prefs.defaults["concurrent_downloads"] = 1
 prefs.defaults["download_action"] = "Import to Calibre"
+prefs.defaults["active_backend"] = "libgen"
+
+BACKENDS = {
+    "libgen": "LibGen (Classic)",
+    "bookracy": "Bookracy (api.bookracy.com)",
+    "dual": "Dual Engine (LibGen + Bookracy Failover)",
+}
+
+def get_active_backend():
+    b = prefs.get("active_backend", "libgen")
+    return b if b in BACKENDS else "libgen"
+
+def set_active_backend(backend_name):
+    if backend_name in BACKENDS:
+        prefs["active_backend"] = backend_name
 
 prefs.defaults["download_directory"] = os.path.join(os.path.expanduser("~"), "Downloads", "callib")
 prefs.defaults["save_search_history"] = False
@@ -165,10 +181,19 @@ def get_mirrors():
     if cleaned_custom != prefs.get("custom_mirrors", []):
         prefs["custom_mirrors"] = cleaned_custom
 
+    backend = get_active_backend()
+    if backend == "bookracy":
+        return ["https://api.bookracy.com"]
+
     pool = []
     for m in [primary] + list(PERMANENT_MIRRORS) + cleaned_fallbacks + cleaned_custom:
         if m and m not in pool:
             pool.append(m)
+
+    if backend == "dual" and "https://api.bookracy.com" not in pool:
+        pool.append("https://api.bookracy.com")
+    elif backend != "dual" and "https://api.bookracy.com" in pool:
+        pool.remove("https://api.bookracy.com")
 
     latencies = prefs.get("mirror_latencies", {})
     if not isinstance(latencies, dict):
