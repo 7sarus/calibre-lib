@@ -2113,8 +2113,8 @@ class LibgenDialog(QDialog):
                 remove_pending_search(query)
                 self.update_pending_combo()
 
-    def open_hardcover_dialog(self):
-        dlg = HardcoverShelfDialog(self)
+    def open_csv_import_dialog(self):
+        dlg = CsvImportDialog(self)
         dlg.exec()
 
     def set_tab_text_for_widget(self, widget, text):
