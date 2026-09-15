@@ -1128,7 +1128,7 @@ class CsvImportDialog(QDialog):
     def deselect_all_books(self):
         self.books_table.clearSelection()
 
-    def _is_in_library(self, isbn="", title=""):
+    def _is_in_library(self, isbn="", title="", author=""):
         try:
             gui = getattr(self.parent_dialog, "gui", None)
             if not gui or not getattr(gui, "current_db", None):
@@ -1141,8 +1141,12 @@ class CsvImportDialog(QDialog):
                     return True
             if title and new_api:
                 clean_t = title.replace('"', '').strip()
-                if clean_t and new_api.search(f'title:"={clean_t}"'):
-                    return True
+                clean_a = author.replace('"', '').strip() if author else ""
+                if clean_t:
+                    if clean_a and new_api.search(f'title:"={clean_t}" and authors:"={clean_a}"'):
+                        return True
+                    if new_api.search(f'title:"={clean_t}"'):
+                        return True
         except Exception:
             pass
         return False
@@ -1161,7 +1165,8 @@ class CsvImportDialog(QDialog):
                 b = self.fetched_books[r]
                 isbn = b.get("best_isbn") or b.get("isbn_13") or b.get("isbn_10") or ""
                 title = b.get("title", "")
-                if self._is_in_library(isbn, title):
+                author = b.get("author", "")
+                if self._is_in_library(isbn, title, author):
                     in_lib_matches.append((r, b))
 
         if in_lib_matches:
@@ -1188,7 +1193,7 @@ class CsvImportDialog(QDialog):
             author = b.get("author", "")
             isbn = b.get("best_isbn") or b.get("isbn_13") or b.get("isbn_10") or ""
 
-            if skip_library and self._is_in_library(isbn, title):
+            if skip_library and self._is_in_library(isbn, title, author):
                 skipped_in_lib += 1
                 self.books_table.setItem(r, 4, QTableWidgetItem("Skipped (In Library)"))
                 continue
