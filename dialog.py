@@ -1791,25 +1791,6 @@ class LibgenDialog(QDialog):
         self.history_settings_btn.clicked.connect(self.open_history_settings)
         adv_row2.addWidget(self.history_settings_btn)
 
-        # Pending Searches Sub-widget (only visible if pending items exist)
-        self.pending_widget = QWidget(self)
-        pending_layout = QHBoxLayout(self.pending_widget)
-        pending_layout.setContentsMargins(0, 0, 0, 0)
-        pending_layout.setSpacing(4)
-        pending_layout.addWidget(QLabel("Pending:"))
-        self.pending_combo = QComboBox(self)
-        self.pending_combo.setMaximumWidth(180)
-        self.pending_combo.setToolTip("Select a failed or zero-result search to retry")
-        self.pending_combo.currentIndexChanged.connect(self.on_pending_selected)
-        pending_layout.addWidget(self.pending_combo)
-
-        self.pending_clear_btn = QPushButton("✕", self)
-        self.pending_clear_btn.setToolTip("Remove selected pending search query")
-        self.pending_clear_btn.setFixedWidth(24)
-        self.pending_clear_btn.clicked.connect(self.remove_selected_pending)
-        pending_layout.addWidget(self.pending_clear_btn)
-        adv_row2.addWidget(self.pending_widget)
-
         adv_row2.addStretch(1)
         adv_vlayout.addLayout(adv_row2)
 
@@ -2104,7 +2085,7 @@ class LibgenDialog(QDialog):
         q_row2.addWidget(self.start_download_btn)
 
         queue_layout.addLayout(q_row2)
-        self.tabs.addTab(self.tab_queue, "Queue (0)")
+        self.tabs.addTab(self.tab_queue, "Downloads (0)")
 
 
         # --- Tab 3: Mirrors & Health ---
@@ -3264,9 +3245,9 @@ class LibgenDialog(QDialog):
             )
             total = len(self.queue_items)
             if 0 < remaining < total:
-                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)")
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Downloads ({remaining} left)")
             else:
-                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({total})")
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Downloads ({total})")
             self._schedule_filter()
             self.save_queue()
         finally:
@@ -3893,7 +3874,7 @@ class LibgenDialog(QDialog):
                 downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
                 remaining = max(0, len(self.queue_items) - downloaded)
                 self.status_label.setText(f"{downloaded}/{len(self.queue_items)} downloaded ({remaining} remaining)")
-                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Downloads ({remaining} left)" if remaining > 0 else f"Downloads ({len(self.queue_items)})")
 
     def on_item_progress(self, idx, bytes_read, total_bytes, speed_kb):
         if total_bytes > 0:
@@ -3927,7 +3908,7 @@ class LibgenDialog(QDialog):
                 total = getattr(self, "session_total", len(self.session_target_indices))
                 remaining = max(0, total - completed)
                 self.status_label.setText(f"📥 {completed}/{total} downloaded ({remaining} remaining) • {read_mb:.1f}/{tot_mb:.1f} MB @ {speed_kb:.1f} KB/s{eta_str}")
-                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Downloads ({remaining} left)" if remaining > 0 else f"Downloads ({len(self.queue_items)})")
                 if hasattr(self, "bulk_progress_bar") and total > 0:
                     self.bulk_progress_bar.setVisible(True)
                     self.bulk_progress_bar.setMaximum(total)
@@ -3938,8 +3919,8 @@ class LibgenDialog(QDialog):
                 downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
                 remaining = max(0, len(self.queue_items) - downloaded)
                 self.status_label.setText(f"📥 {downloaded}/{len(self.queue_items)} downloaded ({remaining} remaining) • {read_mb:.1f}/{tot_mb:.1f} MB @ {speed_kb:.1f} KB/s{eta_str}")
-                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
-                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Downloads ({remaining} left)" if remaining > 0 else f"Downloads ({len(self.queue_items)})")
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Downloads ({remaining} left)" if remaining > 0 else f"Downloads ({len(self.queue_items)})")
 
     def import_books_to_library(self, file_paths):
         """Batch import downloaded books into Calibre library."""
