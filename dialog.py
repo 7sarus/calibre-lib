@@ -1258,6 +1258,30 @@ class HardcoverShelfDialog(QDialog):
         is_isbn_mode = self.isbn_mode_radio.isChecked()
         skip_library = self.skip_library_checkbox.isChecked()
 
+        # Count how many selected books are already in Calibre library
+        in_lib_matches = []
+        for r in selected_rows:
+            if r < len(self.fetched_books):
+                b = self.fetched_books[r]
+                isbn = b.get("best_isbn") or b.get("isbn_13") or b.get("isbn_10") or ""
+                title = b.get("title", "")
+                if self._is_in_library(isbn, title):
+                    in_lib_matches.append((r, b))
+
+        # If matching books are found in Calibre, prompt user explicitly
+        if in_lib_matches:
+            reply = QMessageBox.question(
+                self,
+                "Books Already in Library",
+                f"Found {len(in_lib_matches)} book(s) among your selection that are already in your Calibre library.\n\n"
+                "Would you like to SKIP these books and queue only new items?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes,
+            )
+            if reply == QMessageBox.StandardButton.Cancel:
+                return
+            skip_library = (reply == QMessageBox.StandardButton.Yes)
+
         added_books = []
         skipped_no_isbn = 0
         skipped_in_lib = 0
