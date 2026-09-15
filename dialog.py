@@ -1709,7 +1709,8 @@ class LibgenDialog(QDialog):
         self.hardcover_btn.clicked.connect(self.open_hardcover_dialog)
         adv_row1.addWidget(self.hardcover_btn)
 
-        adv_row1.addWidget(QLabel("Field:"))
+        self.field_label = QLabel("Field:")
+        adv_row1.addWidget(self.field_label)
         self.field_combo = QComboBox(self)
         self.field_combo.setMaximumWidth(120)
         self.field_combo.addItems(list(SEARCH_FIELDS.keys()))
@@ -1720,7 +1721,8 @@ class LibgenDialog(QDialog):
         self.field_combo.currentTextChanged.connect(self.save_all_field_preferences)
         adv_row1.addWidget(self.field_combo)
 
-        adv_row1.addWidget(QLabel("Cat:"))
+        self.category_label = QLabel("Cat:")
+        adv_row1.addWidget(self.category_label)
         self.category_combo = QComboBox(self)
         self.category_combo.setMaximumWidth(140)
         self.category_combo.addItems(list(CATEGORIES.keys()))
@@ -1739,7 +1741,8 @@ class LibgenDialog(QDialog):
         self.max_results_spinbox.valueChanged.connect(self.save_all_field_preferences)
         adv_row1.addWidget(self.max_results_spinbox)
 
-        adv_row1.addWidget(QLabel("Mirror:"))
+        self.mirror_label = QLabel("Mirror:")
+        adv_row1.addWidget(self.mirror_label)
         self.mirror_combo = QComboBox(self)
         self.mirror_combo.setMaximumWidth(150)
         self.update_mirror_combobox()
@@ -1756,7 +1759,8 @@ class LibgenDialog(QDialog):
         adv_row2 = QHBoxLayout()
         adv_row2.setSpacing(8)
 
-        adv_row2.addWidget(QLabel("Mode:"))
+        self.filter_label = QLabel("Mode:")
+        adv_row2.addWidget(self.filter_label)
         self.filter_combo = QComboBox(self)
         self.filter_combo.setMaximumWidth(110)
         self.filter_combo.addItems(FILTER_MODES)
@@ -2199,6 +2203,7 @@ class LibgenDialog(QDialog):
 
         self.restore_header_states()
         self.update_pending_combo()
+        self.update_backend_ui_visibility()
 
     def update_pending_combo(self):
         if not hasattr(self, "pending_combo"):
@@ -2386,9 +2391,53 @@ class LibgenDialog(QDialog):
             from config import set_active_backend
         set_active_backend(backend_code)
         self.update_mirror_combobox()
+        self.update_backend_ui_visibility()
         self.append_log(f"[CONFIG] Switched active API backend to: {title}")
         if hasattr(self, "toast"):
             self.toast.show_toast(f"⚡ Backend: {title}")
+
+    def update_backend_ui_visibility(self):
+        try:
+            from calibre_plugins.libgen_store.config import get_active_backend
+        except Exception:
+            from config import get_active_backend
+
+        backend = get_active_backend()
+        is_bookracy = (backend == "bookracy")
+
+        # Hide/show LibGen specific controls in advanced drawer
+        if hasattr(self, "field_label"):
+            self.field_label.setVisible(not is_bookracy)
+        if hasattr(self, "field_combo"):
+            self.field_combo.setVisible(not is_bookracy)
+        if hasattr(self, "category_label"):
+            self.category_label.setVisible(not is_bookracy)
+        if hasattr(self, "category_combo"):
+            self.category_combo.setVisible(not is_bookracy)
+        if hasattr(self, "mirror_label"):
+            self.mirror_label.setVisible(not is_bookracy)
+        if hasattr(self, "mirror_combo"):
+            self.mirror_combo.setVisible(not is_bookracy)
+        if hasattr(self, "fetch_mirrors_btn"):
+            self.fetch_mirrors_btn.setVisible(not is_bookracy)
+        if hasattr(self, "filter_label"):
+            self.filter_label.setVisible(not is_bookracy)
+        if hasattr(self, "filter_combo"):
+            self.filter_combo.setVisible(not is_bookracy)
+
+        # Hide/show Bookracy Fallback checkbox on Queue tab (only relevant for LibGen/Dual modes)
+        if hasattr(self, "bookracy_fallback_checkbox"):
+            self.bookracy_fallback_checkbox.setVisible(not is_bookracy)
+        if hasattr(self, "retry_bookracy_btn"):
+            self.retry_bookracy_btn.setVisible(not is_bookracy)
+
+        # Hide/show 'Mirrors & Health' tab when in Bookracy mode
+        if hasattr(self, "tabs") and hasattr(self, "tab_mirrors"):
+            m_idx = self.tabs.indexOf(self.tab_mirrors)
+            if is_bookracy and m_idx >= 0:
+                self.tabs.removeTab(m_idx)
+            elif not is_bookracy and m_idx < 0:
+                self.tabs.addTab(self.tab_mirrors, "Mirrors & Health")
 
     def manual_fetch_mirrors(self):
         self.fetch_mirrors_btn.setEnabled(False)
