@@ -9,6 +9,10 @@
 - **Modernized UI & Live Metrics:** Real-time speed tiers, exact MB transferred, ETA countdowns, and movable tabs.
 - **Instant Mirror Failover:** Automatic fallback to fastest responsive mirrors with live latency indicators.
 
+### Community & Discussion
+- 💬 **Discord:** [Join the Discord Community](https://discord.gg/x2cZK7MT)
+- 🤖 **Reddit:** [r/booksdev](https://reddit.com/r/booksdev)
+
 ### Detailed Changes
 - **Hardcover Reading List & Shelf Downloader:** Directly sync personal reading lists and shelves ("Want to Read", "Currently Reading", custom lists) via Hardcover.app API token. Includes automatic skipping of books already in your Calibre library, ISBN matching, and one-click queue staging.
 - **Search Selected Calibre Book Records:** Select one or multiple books in your Calibre library and click "Search Record(s)" to initiate an automated serialized search queue across mirrors without typing queries.

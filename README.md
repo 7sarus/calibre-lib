@@ -2,6 +2,7 @@
 
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/7sarus/calibre-lib?include_prereleases&color=blue)](https://github.com/7sarus/calibre-lib/releases)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/x2cZK7MT)
+[![Reddit](https://img.shields.io/badge/Reddit-r%2Fbooksdev-FF4500?logo=reddit&logoColor=white)](https://reddit.com/r/booksdev)
 [![GitHub stars](https://img.shields.io/github/stars/7sarus/calibre-lib?style=social)](https://github.com/7sarus/calibre-lib/stargazers)
 [![GitHub all releases](https://img.shields.io/github/downloads/7sarus/calibre-lib/total)](https://github.com/7sarus/calibre-lib/releases)
 [![License: WTFPL](https://img.shields.io/badge/License-WTFPL-brightgreen.svg)](LICENSE)
@@ -134,14 +135,15 @@ Configure:
 
 ## 💬 Community & Support
 
-Join our Discord server for discussions, feature requests, mirror health updates, and bug reports:  
-👉 **[Join the Discord Community](https://discord.gg/x2cZK7MT)**
+Join our community for discussions, feature requests, mirror health updates, and bug reports:  
+- 💬 **Discord**: [Join the Discord Community](https://discord.gg/x2cZK7MT)
+- 🤖 **Reddit**: [r/booksdev](https://reddit.com/r/booksdev)
 
 ---
 
 ## 📦 Releases & Version History
 
-- **[v1.11b (Latest Beta)](https://github.com/7sarus/calibre-lib/releases)**:
+- **[v1.50 (Latest Release)](https://github.com/7sarus/calibre-lib/releases)**:
   - **Reorderable Tabs**: Drag-and-drop movable tabs (`QTabWidget.setMovable(True)`) with dynamic widget resolution and tab order persistence.
   - **Queue Segmentation & Auto-Retention**: Filter views for `Queued`, `Downloading`, `Downloaded`, and `Failed`. Automatic history pruning older than $X$ days and configurable queue/history limits.
   - **Table Column Width Persistence**: Restores `results_table`, `queue_table`, and `mirrors_table` column widths across restarts via Qt header state hex serialization.
