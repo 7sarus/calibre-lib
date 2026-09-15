@@ -1751,6 +1751,13 @@ class LibgenDialog(QDialog):
         queue_bar_layout.addWidget(self.start_queue_search_btn, stretch=1)
 
 
+        self.pause_queue_search_btn = QPushButton("⏸ Pause", self)
+        self.pause_queue_search_btn.setStyleSheet(COMPACT_BUTTON_STYLE)
+        self.pause_queue_search_btn.setVisible(False)
+        self.pause_queue_search_btn.setToolTip("Pause batch record search and retain remaining queue")
+        self.pause_queue_search_btn.clicked.connect(self.pause_search_queue)
+        queue_bar_layout.addWidget(self.pause_queue_search_btn)
+
         self.stop_queue_search_btn = QPushButton("Stop Queue Search", self)
         self.stop_queue_search_btn.setStyleSheet(DANGER_BUTTON_STYLE)
         self.stop_queue_search_btn.setVisible(False)
@@ -2006,6 +2013,13 @@ class LibgenDialog(QDialog):
         q_row2.addWidget(self.download_dir_btn)
 
         q_row2.addStretch(1)
+
+        self.pause_download_btn = QPushButton("⏸ Pause Download", self)
+        self.pause_download_btn.setStyleSheet(COMPACT_BUTTON_STYLE)
+        self.pause_download_btn.setVisible(False)
+        self.pause_download_btn.setToolTip("Pause downloading and retain remaining queued items")
+        self.pause_download_btn.clicked.connect(self.pause_bulk_download)
+        q_row2.addWidget(self.pause_download_btn)
 
         self.stop_download_btn = QPushButton("Stop Download", self)
         self.stop_download_btn.setStyleSheet(DANGER_BUTTON_STYLE)
@@ -2772,13 +2786,13 @@ class LibgenDialog(QDialog):
             return
 
         self.start_queue_search_btn.setVisible(False)
+        if hasattr(self, "pause_queue_search_btn"):
+            self.pause_queue_search_btn.setVisible(True)
+            self.pause_queue_search_btn.setText("⏸ Pause")
         self.stop_queue_search_btn.setVisible(True)
         self.stop_queue_search_btn.setEnabled(True)
         self.stop_queue_search_btn.setText("Stop Queue Search")
         self.search_btn.setEnabled(False)
-        self.search_results = []
-        self.populate_results_table()
-        self.set_tab_text_for_widget(getattr(self, "tab_results", None), "Search Results (0)")
 
         total_recs = len(self.selected_books)
         if hasattr(self, "search_progress_bar"):
@@ -2787,9 +2801,9 @@ class LibgenDialog(QDialog):
             self.search_progress_bar.setValue(0)
             self.search_progress_bar.setFormat(f"Queue Search: 0/{total_recs} records")
 
-        self.status_label.setText(f"Starting serialized search across {total_recs} Calibre book record(s)...")
+        self.status_label.setText(f"Starting search across {total_recs} record(s)...")
         self.search_mirror_label.setText(f"Parallel search: 0/{total_recs} records processed")
-        self.append_log(f"--- Starting Parallel Search Queue ({total_recs} books, max 2 results/book, 3 mirror lanes) ---")
+        self.append_log(f"--- Starting Parallel Search Queue ({total_recs} books) ---")
 
         selected_mirror = self.mirror_combo.currentText().strip()
         if selected_mirror.startswith("Auto"):
@@ -2812,12 +2826,27 @@ class LibgenDialog(QDialog):
         self.search_queue_worker.finished_signal.connect(self.on_search_queue_finished)
         self.search_queue_worker.start()
 
+    def pause_search_queue(self):
+        if hasattr(self, "search_queue_worker") and self.search_queue_worker and self.search_queue_worker.isRunning():
+            self.search_queue_worker.abort()
+            self.append_log("[Search Queue] Paused search queue. Remaining items preserved.")
+            self.status_label.setText("Search queue paused.")
+            self.search_mirror_label.setText("Search queue paused.")
+            if hasattr(self, "pause_queue_search_btn"):
+                self.pause_queue_search_btn.setVisible(False)
+            self.stop_queue_search_btn.setVisible(False)
+            self.start_queue_search_btn.setVisible(True)
+            self.start_queue_search_btn.setEnabled(True)
+            self.search_btn.setEnabled(True)
+
     def stop_search_queue(self):
         if hasattr(self, "search_queue_worker") and self.search_queue_worker and self.search_queue_worker.isRunning():
             self.stop_queue_search_btn.setEnabled(False)
             self.stop_queue_search_btn.setText("Stopping...")
-            self.status_label.setText("Stopping serialized search queue...")
+            self.status_label.setText("Stopping search queue...")
             self.search_queue_worker.abort()
+        if hasattr(self, "pause_queue_search_btn"):
+            self.pause_queue_search_btn.setVisible(False)
         if hasattr(self, "search_progress_bar"):
             self.search_progress_bar.setVisible(False)
 
@@ -2847,6 +2876,8 @@ class LibgenDialog(QDialog):
     def on_search_queue_finished(self, all_results, matched_cnt, failed_cnt):
         self.start_queue_search_btn.setVisible(True)
         self.start_queue_search_btn.setEnabled(True)
+        if hasattr(self, "pause_queue_search_btn"):
+            self.pause_queue_search_btn.setVisible(False)
         self.stop_queue_search_btn.setVisible(False)
         self.search_btn.setEnabled(True)
         if hasattr(self, "search_progress_bar"):
@@ -3661,6 +3692,9 @@ class LibgenDialog(QDialog):
         remaining = self.session_total
 
         self.start_download_btn.setVisible(False)
+        if hasattr(self, "pause_download_btn"):
+            self.pause_download_btn.setVisible(True)
+            self.pause_download_btn.setText("⏸ Pause Download")
         self.stop_download_btn.setVisible(True)
         self.stop_download_btn.setEnabled(True)
         self.stop_download_btn.setText("Stop Download")
@@ -3695,6 +3729,8 @@ class LibgenDialog(QDialog):
             QMessageBox.warning(self, "Download Folder Error", str(e))
             self.start_download_btn.setVisible(True)
             self.start_download_btn.setEnabled(True)
+            if hasattr(self, "pause_download_btn"):
+                self.pause_download_btn.setVisible(False)
             self.stop_download_btn.setVisible(False)
             return
 
@@ -3725,6 +3761,23 @@ class LibgenDialog(QDialog):
         self.download_worker.all_done.connect(self.on_bulk_all_done)
         self.download_worker.start()
 
+    def pause_bulk_download(self):
+        if self.download_worker and self.download_worker.isRunning():
+            self.append_log("[Downloads] Pausing bulk download. Remaining queued items retained.")
+            self.status_label.setText("Downloads paused.")
+            self.download_worker.abort()
+        if hasattr(self, "pause_download_btn"):
+            self.pause_download_btn.setVisible(False)
+        self.stop_download_btn.setVisible(False)
+        self.start_download_btn.setVisible(True)
+        self.start_download_btn.setEnabled(True)
+        if hasattr(self, "remove_queue_btn"):
+            self.remove_queue_btn.setEnabled(True)
+        if hasattr(self, "clear_downloaded_btn"):
+            self.clear_downloaded_btn.setEnabled(True)
+        if hasattr(self, "clear_queue_btn"):
+            self.clear_queue_btn.setEnabled(True)
+
     def stop_bulk_download(self):
         if self.download_worker and self.download_worker.isRunning():
             self.stop_download_btn.setEnabled(False)
@@ -3738,6 +3791,8 @@ class LibgenDialog(QDialog):
             self.stop_download_btn.setEnabled(True)
             self.start_download_btn.setVisible(True)
             self.start_download_btn.setEnabled(True)
+        if hasattr(self, "pause_download_btn"):
+            self.pause_download_btn.setVisible(False)
         if hasattr(self, "remove_queue_btn"):
             self.remove_queue_btn.setEnabled(True)
         if hasattr(self, "clear_downloaded_btn"):
@@ -3878,6 +3933,8 @@ class LibgenDialog(QDialog):
             print(f"[LibGen Plugin] Failed to auto-import books: {e}")
 
     def on_bulk_all_done(self, downloaded_items, fail_count, is_aborted):
+        if hasattr(self, "pause_download_btn"):
+            self.pause_download_btn.setVisible(False)
         self.stop_download_btn.setVisible(False)
         self.stop_download_btn.setText("Stop Download")
         self.stop_download_btn.setEnabled(True)
