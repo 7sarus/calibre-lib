@@ -124,7 +124,6 @@ def get_active_backend():
 def set_active_backend(backend_name):
     if backend_name in BACKENDS:
         prefs["active_backend"] = backend_name
->>>>>>> feat/bookracy
 
 prefs.defaults["download_directory"] = os.path.join(os.path.expanduser("~"), "Downloads", "callib")
 prefs.defaults["save_search_history"] = False
@@ -143,12 +142,13 @@ prefs.defaults["hardcover_dialog_height"] = 460
 prefs.defaults["hardcover_books_table_header"] = ""
 prefs.defaults["review_dialog_width"] = 720
 prefs.defaults["review_dialog_height"] = 420
-prefs.defaults["review_table_header"] = ""
-prefs.defaults["cover_panel_width"] = 200
-prefs.defaults["cover_panel_height"] = 300
-prefs.defaults["log_panel_height"] = 120
-prefs.defaults["dialog_width"] = 920
-prefs.defaults["dialog_height"] = 600
+prefs.defaults["review_dialog_splitter"] = ""
+prefs.defaults["table_column_widths"] = {}
+prefs.defaults["queue_column_widths"] = {}
+prefs.defaults["mirrors_column_widths"] = {}
+prefs.defaults["filter_drawer_expanded"] = True
+prefs.defaults["active_queue_subtab"] = 0
+prefs.defaults["log_drawer_expanded"] = True
 
 SEARCH_FIELDS = {
     "All Fields": "",
@@ -169,42 +169,28 @@ CATEGORIES = {
     "Magazines": "m",
 }
 
-def get_mirrors():
-    """Returns an ordered list of unique mirrors, defaulting to lowest latency first."""
-    primary = normalize_mirror_url(prefs.get("primary_mirror", "https://libgen.li")) or "https://libgen.li"
-    fallback_str = prefs.get("fallback_mirrors", "")
-    fallbacks = [normalize_mirror_url(m) for m in fallback_str.split(",")]
-    custom = [normalize_mirror_url(m) for m in prefs.get("custom_mirrors", [])]
+# Helper functions for preferences access
+def get_mirror_pool():
+    """Returns a list of mirror URLs combining primary, permanent, fallbacks, and custom mirrors."""
+    primary = normalize_mirror_url(prefs.get("primary_mirror", "https://libgen.li"))
+    raw_fallbacks = prefs.get("fallback_mirrors", "")
+    fallbacks = [normalize_mirror_url(m) for m in raw_fallbacks.split(",") if m.strip()]
     cleaned_fallbacks = [m for m in fallbacks if m]
-    cleaned_custom = [m for m in custom if m]
 
-    if cleaned_fallbacks != [m.strip().rstrip("/") for m in fallback_str.split(",") if m.strip()]:
-        prefs["fallback_mirrors"] = ", ".join(cleaned_fallbacks)
-    if cleaned_custom != prefs.get("custom_mirrors", []):
-        prefs["custom_mirrors"] = cleaned_custom
+    custom_list = prefs.get("custom_mirrors", [])
+    cleaned_custom = [normalize_mirror_url(m) for m in custom_list if m.strip()]
 
     backend = get_active_backend()
-    if backend == "bookracy":
-        return ["https://api.bookracy.com"]
 
     pool = []
     for m in [primary] + list(PERMANENT_MIRRORS) + cleaned_fallbacks + cleaned_custom:
         if m and m not in pool:
             pool.append(m)
 
-<<<<<<< HEAD
-    if backend == "dual" and "https://api.bookracy.com" not in pool:
+    if (backend == "dual" or prefs.get("bookracy_enabled", True)) and "https://api.bookracy.com" not in pool:
         pool.append("https://api.bookracy.com")
-    elif backend != "dual" and "https://api.bookracy.com" in pool:
+    elif backend != "dual" and not prefs.get("bookracy_enabled", True) and "https://api.bookracy.com" in pool:
         pool.remove("https://api.bookracy.com")
-=======
-    if prefs.get("bookracy_enabled", True):
-        if "https://api.bookracy.com" not in pool:
-            pool.append("https://api.bookracy.com")
-    else:
-        if "https://api.bookracy.com" in pool:
-            pool.remove("https://api.bookracy.com")
->>>>>>> feat/bookracy
 
     latencies = prefs.get("mirror_latencies", {})
     if not isinstance(latencies, dict):
