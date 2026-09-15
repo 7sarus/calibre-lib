@@ -1,5 +1,14 @@
 # Changelog
 
+## [v1.50b] (Beta API Backend Edition)
+
+### Highlights
+- **Bookracy Search Provider:** Added support for https://bookracy.com as an optional source queried concurrently with LibGen mirrors.
+- **Dual-Stage Failover Retry:** When all LibGen mirrors fail to download a book, automatically queries Bookracy with exact MD5 match first, then falls back to Title + Author query with format matching.
+- **"Retry with Bookracy" Queue Action:** Instant one-click button in the Queue tab to retry failed or pending downloads directly through Bookracy.
+- **Live "Bookracy Fallback" Toggle:** Checkbox directly in the Queue toolbar to toggle automatic Bookracy failover on the fly.
+- **Isolated Settings Section:** Standalone "Bookracy Provider & Fallback" group box in Preferences to keep Bookracy configuration strictly separated from LibGen mirrors.
+
 ## [v1.50] - 2026-09-15
 
 ### Highlights

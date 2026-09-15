@@ -70,7 +70,6 @@ DEFAULT_FALLBACK_MIRRORS = (
     "https://libgen.bz",
     "https://libgen.la",
 )
-_VALID_MIRROR_RE = re.compile(r"^https?://(?:www\.)?libgen\.[a-z]{2,}(?::\d+)?/?$", re.IGNORECASE)
 _VALID_MIRROR_RE = re.compile(r"^https?://(?:(?:www\.)?libgen\.[a-z]{2,}|api\.bookracy\.com)(?::\d+)?/?$", re.IGNORECASE)
 
 
@@ -109,6 +108,8 @@ prefs.defaults["fast_mode"] = False
 prefs.defaults["concurrent_downloads"] = 1
 prefs.defaults["download_action"] = "Import to Calibre"
 prefs.defaults["active_backend"] = "libgen"
+prefs.defaults["bookracy_enabled"] = True
+prefs.defaults["bookracy_auto_retry_failed"] = True
 
 BACKENDS = {
     "libgen": "LibGen (Classic)",
@@ -123,6 +124,7 @@ def get_active_backend():
 def set_active_backend(backend_name):
     if backend_name in BACKENDS:
         prefs["active_backend"] = backend_name
+>>>>>>> feat/bookracy
 
 prefs.defaults["download_directory"] = os.path.join(os.path.expanduser("~"), "Downloads", "callib")
 prefs.defaults["save_search_history"] = False
@@ -190,16 +192,29 @@ def get_mirrors():
         if m and m not in pool:
             pool.append(m)
 
+<<<<<<< HEAD
     if backend == "dual" and "https://api.bookracy.com" not in pool:
         pool.append("https://api.bookracy.com")
     elif backend != "dual" and "https://api.bookracy.com" in pool:
         pool.remove("https://api.bookracy.com")
+=======
+    if prefs.get("bookracy_enabled", True):
+        if "https://api.bookracy.com" not in pool:
+            pool.append("https://api.bookracy.com")
+    else:
+        if "https://api.bookracy.com" in pool:
+            pool.remove("https://api.bookracy.com")
+>>>>>>> feat/bookracy
 
     latencies = prefs.get("mirror_latencies", {})
     if not isinstance(latencies, dict):
         latencies = {}
 
+    last_succ = normalize_mirror_url(prefs.get("last_successful_mirror", ""))
+
     def latency_key(url):
+        if last_succ and url == last_succ:
+            return (-1, 0)
         # Lowest positive ms first. Untested mirrors (None / <=0) follow tested ones.
         ms = latencies.get(url)
         if ms is not None and isinstance(ms, (int, float)) and ms > 0:
@@ -782,7 +797,22 @@ class ConfigWidget(QWidget):
         self.clear_history_btn.clicked.connect(self._confirm_clear_history)
         history_layout.addRow("", self.clear_history_btn)
 
+        # Bookracy Settings Group
+        bookracy_group = QGroupBox("Bookracy Provider & Fallback")
+        bookracy_layout = QFormLayout(bookracy_group)
+
+        self.bookracy_enabled_cb = QCheckBox("Enable Bookracy search and mirror pool", self)
+        self.bookracy_enabled_cb.setChecked(bool(prefs.get("bookracy_enabled", True)))
+        self.bookracy_enabled_cb.setToolTip("Enables searching https://bookracy.com alongside LibGen mirrors.")
+        bookracy_layout.addRow("Provider:", self.bookracy_enabled_cb)
+
+        self.bookracy_auto_retry_cb = QCheckBox("Automatically retry failed LibGen downloads via Bookracy", self)
+        self.bookracy_auto_retry_cb.setChecked(bool(prefs.get("bookracy_auto_retry_failed", True)))
+        self.bookracy_auto_retry_cb.setToolTip("When all LibGen mirrors fail to download a book, automatically queries Bookracy by MD5 and Title as a fallback source.")
+        bookracy_layout.addRow("Failover Retry:", self.bookracy_auto_retry_cb)
+
         self.layout.addWidget(filter_group)
+        self.layout.addWidget(bookracy_group)
         self.layout.addWidget(history_group)
 
         # Informational note
@@ -819,3 +849,5 @@ class ConfigWidget(QWidget):
         prefs["max_search_history"] = self.max_search_history_spin.value()
         prefs["max_download_history"] = self.max_download_history_spin.value()
         prefs["history_retention_days"] = self.retention_days_spin.value()
+        prefs["bookracy_enabled"] = self.bookracy_enabled_cb.isChecked()
+        prefs["bookracy_auto_retry_failed"] = self.bookracy_auto_retry_cb.isChecked()

@@ -789,7 +789,8 @@ class BulkDownloadWorker(QThread):
                         self.link_trying.emit(idx, url, stage)
 
                     try:
-                        self.item_status.emit(idx, "Downloading...")
+                        allow_br = prefs.get("bookracy_auto_retry_failed", True)
+                        force_br = bool(item.get("force_bookracy", False))
                         dest_path, cover_url = scraper.resolve_and_download(
                             book.detail_url,
                             dest_file,
@@ -801,6 +802,8 @@ class BulkDownloadWorker(QThread):
                             link_callback=on_link,
                             abort_check=lambda: self._is_aborted,
                             fast_mode=self.fast_mode,
+                            allow_bookracy=allow_br,
+                            force_bookracy=force_br,
                         )
                         self.item_status.emit(idx, f"✓ Downloaded (Pending Review)|{dest_path}")
                         with dl_lock:
@@ -1995,6 +1998,12 @@ class LibgenDialog(QDialog):
         self.retry_failed_btn.clicked.connect(self.retry_failed_downloads)
         q_row1.addWidget(self.retry_failed_btn)
 
+        self.retry_bookracy_btn = QPushButton("Retry with Bookracy", self)
+        self.retry_bookracy_btn.setStyleSheet(COMPACT_BUTTON_STYLE)
+        self.retry_bookracy_btn.setToolTip("Reroute failed or pending downloads directly through Bookracy")
+        self.retry_bookracy_btn.clicked.connect(self.retry_failed_with_bookracy)
+        q_row1.addWidget(self.retry_bookracy_btn)
+
         q_row1.addWidget(QLabel("Concurrent Files:"))
         self.concurrency_spinbox = QSpinBox(self)
         self.concurrency_spinbox.setRange(1, 4)
@@ -2017,6 +2026,12 @@ class LibgenDialog(QDialog):
         self.auto_retry_checkbox = QCheckBox("Auto-retry until all downloaded", self)
         self.auto_retry_checkbox.setChecked(False)
         q_row2.addWidget(self.auto_retry_checkbox)
+
+        self.bookracy_fallback_checkbox = QCheckBox("Bookracy Fallback", self)
+        self.bookracy_fallback_checkbox.setToolTip("Automatically retry failed LibGen downloads with Bookracy")
+        self.bookracy_fallback_checkbox.setChecked(bool(prefs.get("bookracy_auto_retry_failed", True)))
+        self.bookracy_fallback_checkbox.stateChanged.connect(self._toggle_bookracy_fallback)
+        q_row2.addWidget(self.bookracy_fallback_checkbox)
 
         q_row2.addWidget(QLabel("After:"))
         self.download_action_combo = QComboBox(self)
@@ -3485,6 +3500,48 @@ class LibgenDialog(QDialog):
 
         self.append_log(f"🔄 Retrying {len(failed_indices)} failed book(s), cycling mirrors by best latency...")
         self.start_bulk_download(target_indices=failed_indices)
+
+    def retry_failed_with_bookracy(self):
+        """Finds all failed or pending books in the queue and restarts download directly via Bookracy."""
+        target_indices = []
+        for idx, item in enumerate(self.queue_items):
+            status = item.get("status", "").lower()
+            if "fail" in status or status == "failed" or "stop" in status:
+                target_indices.append(idx)
+
+        # If no explicit failures found, check for any uncompleted books
+        if not target_indices:
+            for idx, item in enumerate(self.queue_items):
+                status = item.get("status", "").lower()
+                if "downloaded" not in status and "added" not in status:
+                    target_indices.append(idx)
+
+        if not target_indices:
+            QMessageBox.information(self, "No Items", "There are no pending or failed items in the queue to retry with Bookracy.")
+            return
+
+        for idx in target_indices:
+            item = self.queue_items[idx]
+            item["force_bookracy"] = True
+            item["status"] = "Queued (Bookracy)"
+            item["progress"] = 0
+            self.queue_table.setItem(idx, 4, QTableWidgetItem("Queued (Bookracy)"))
+            self.queue_table.setItem(idx, 5, QTableWidgetItem("-"))
+            self._set_queue_item_progress(idx, 0, "Queued (Bookracy)")
+
+        self.session_target_indices = list(target_indices)
+        self.session_total = len(target_indices)
+        self.session_completed = 0
+        self.status_label.setText(f"0/{self.session_total} downloaded (Bookracy Retry)")
+
+        self.append_log(f"⚡ Retrying {len(target_indices)} item(s) directly via Bookracy fallback...")
+        self.start_bulk_download(target_indices=target_indices)
+
+    def _toggle_bookracy_fallback(self):
+        if hasattr(self, "bookracy_fallback_checkbox"):
+            prefs["bookracy_auto_retry_failed"] = self.bookracy_fallback_checkbox.isChecked()
+            state_str = "enabled" if self.bookracy_fallback_checkbox.isChecked() else "disabled"
+            self.append_log(f"⚡ Bookracy failover retry is now {state_str}.")
 
     # --- Bulk Download Handlers ---
     def start_bulk_download(self, target_indices=None):
