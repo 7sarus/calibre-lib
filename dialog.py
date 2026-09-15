@@ -1658,14 +1658,8 @@ class LibgenDialog(QDialog):
         self.stop_search_btn.clicked.connect(self.stop_search)
         row1.addWidget(self.stop_search_btn)
 
-        self.hardcover_btn = QPushButton("📚 Hardcover", self)
-        self.hardcover_btn.setToolTip("Import and queue books from your Hardcover.app shelves / lists")
-        self.hardcover_btn.setStyleSheet(COMPACT_BUTTON_STYLE)
-        self.hardcover_btn.clicked.connect(self.open_hardcover_dialog)
-        row1.addWidget(self.hardcover_btn)
-
         self.toggle_filters_btn = QPushButton("⚙ Filters ▾", self)
-        self.toggle_filters_btn.setToolTip("Toggle secondary search parameters (Field, Category, Mirror, History, Retries)")
+        self.toggle_filters_btn.setToolTip("Toggle secondary search parameters (Field, Category, Mirror, Hardcover, History)")
         self.toggle_filters_btn.setStyleSheet("padding: 5px 10px;")
         self.toggle_filters_btn.clicked.connect(self.toggle_advanced_filters)
         row1.addWidget(self.toggle_filters_btn)
@@ -1684,6 +1678,12 @@ class LibgenDialog(QDialog):
 
         adv_row1 = QHBoxLayout()
         adv_row1.setSpacing(8)
+
+        self.hardcover_btn = QPushButton("📚 Hardcover", self)
+        self.hardcover_btn.setToolTip("Import and queue books from your Hardcover.app shelves / lists")
+        self.hardcover_btn.setStyleSheet(COMPACT_BUTTON_STYLE)
+        self.hardcover_btn.clicked.connect(self.open_hardcover_dialog)
+        adv_row1.addWidget(self.hardcover_btn)
 
         adv_row1.addWidget(QLabel("Field:"))
         self.field_combo = QComboBox(self)
@@ -2912,9 +2912,6 @@ class LibgenDialog(QDialog):
 
     def select_all_results(self):
         self.results_table.selectAll()
-
-    def deselect_all_results(self):
-        self.results_table.clearSelection()
 
     def clear_search_results(self):
         if not self.search_results:
