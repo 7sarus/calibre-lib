@@ -717,13 +717,15 @@ class BulkDownloadWorker(QThread):
     link_trying = pyqtSignal(int, str, str)        # index, url, stage ("resolving" or "streaming")
     all_done = pyqtSignal(list, int, bool)         # downloaded_items, fail_count, is_aborted
 
-    def __init__(self, items, auto_retry=False, fast_mode=False, download_dir=None, parent=None):
+    def __init__(self, items, auto_retry=False, fast_mode=False, download_dir=None, concurrent_files=1, parent=None):
         super().__init__(parent)
         self.items = items
         self.auto_retry = auto_retry
         self.fast_mode = fast_mode
         self.download_dir = download_dir
+        self.concurrent_files = max(1, min(4, int(concurrent_files or 1)))
         self._is_aborted = False
+
 
     def abort(self):
         self._is_aborted = True
@@ -823,10 +825,11 @@ class BulkDownloadWorker(QThread):
                         with dl_lock:
                             fail_count_ref[0] += 1
 
-                with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=self.concurrent_files) as pool:
                     futures = [pool.submit(process_item, idx, item) for idx, item in pending_items]
                     for fut in concurrent.futures.as_completed(futures):
                         pass
+
             
                 fail_count = fail_count_ref[0]
 
@@ -1990,8 +1993,18 @@ class LibgenDialog(QDialog):
         self.retry_failed_btn.setStyleSheet(COMPACT_BUTTON_STYLE)
         self.retry_failed_btn.clicked.connect(self.retry_failed_downloads)
         q_row1.addWidget(self.retry_failed_btn)
+
+        q_row1.addWidget(QLabel("Concurrent Files:"))
+        self.concurrency_spinbox = QSpinBox(self)
+        self.concurrency_spinbox.setRange(1, 4)
+        self.concurrency_spinbox.setValue(int(prefs.get("concurrent_downloads", 1)))
+        self.concurrency_spinbox.setToolTip("Number of books downloaded at the same time (default 1 for maximum speed and zero rate-limiting)")
+        self.concurrency_spinbox.valueChanged.connect(self.save_all_field_preferences)
+        q_row1.addWidget(self.concurrency_spinbox)
+
         q_row1.addStretch(1)
         queue_layout.addLayout(q_row1)
+
 
         q_row2 = QHBoxLayout()
         self.fast_mode_checkbox = QCheckBox("⚡ Fast Mode", self)
@@ -3501,13 +3514,21 @@ class LibgenDialog(QDialog):
         prefs["download_directory"] = download_dir
         self.append_log(f"Saving downloads to: {download_dir}")
 
+        n_conc = 1
+        if hasattr(self, "concurrency_spinbox"):
+            n_conc = self.concurrency_spinbox.value()
+        else:
+            n_conc = int(prefs.get("concurrent_downloads", 1))
+
         self.download_worker = BulkDownloadWorker(
             self.queue_items,
             auto_retry=do_auto_retry,
             fast_mode=do_fast_mode,
             download_dir=download_dir,
+            concurrent_files=n_conc,
             parent=self,
         )
+
         self.download_worker.item_status.connect(self.on_item_status)
         self.download_worker.item_progress.connect(self.on_item_progress)
         self.download_worker.log_message.connect(self.append_log)
@@ -3868,7 +3889,10 @@ class LibgenDialog(QDialog):
             prefs["save_search_history"] = self.history_checkbox.isChecked()
         if hasattr(self, "fast_mode_checkbox"):
             prefs["fast_mode"] = self.fast_mode_checkbox.isChecked()
+        if hasattr(self, "concurrency_spinbox"):
+            prefs["concurrent_downloads"] = self.concurrency_spinbox.value()
         if hasattr(self, "download_action_combo"):
+
             prefs["download_action"] = self.download_action_combo.currentText().strip()
         if hasattr(self, "download_dir_btn"):
             prefs["download_directory"] = self.get_download_directory()

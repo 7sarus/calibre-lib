@@ -30,7 +30,8 @@ from qt.core import (
 # Plugin Version definitions
 PLUGIN_VERSION = (1, 11, 0, "b")
 _BASE_VERSION_STR = "v1.11b"
-_BUILD_COMMIT = "73"
+_BUILD_COMMIT = "74"
+
 
 
 
@@ -104,7 +105,9 @@ prefs.defaults["show_cats"] = False
 prefs.defaults["fastest_cdns"] = {}
 prefs.defaults["unique_results"] = True
 prefs.defaults["fast_mode"] = False
+prefs.defaults["concurrent_downloads"] = 1
 prefs.defaults["download_action"] = "Import to Calibre"
+
 prefs.defaults["download_directory"] = os.path.join(os.path.expanduser("~"), "Downloads", "callib")
 prefs.defaults["save_search_history"] = False
 prefs.defaults["max_search_history"] = 50

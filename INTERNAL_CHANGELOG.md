@@ -8,7 +8,15 @@ updated: 2026-09-15
 
 ## 2026-09-15
 
+- id: optimize-download-speed-concurrency-and-buffer
+  type: perf
+  files: [dialog.py, scraper.py, config.py]
+  summary: Defaulted bulk download queue to 1 file at a time to prevent CDN throttling. Added UI Concurrent Files spinbox (1-4). Quadrupled chunk and reassembly buffer from 128 KB to 512 KB.
+  why: User requested fixing download speed by downloading 1 file at a time with maximum connection concentration and evaluating pycurl/aria2 alternatives.
+  validation: 9/9 unit tests pass; pycurl benchmark conducted; live segmented transfer verified
+
 - id: unify-search-queue-bar-and-hide-mirror-status-toast
+
   type: feat
   files: [dialog.py, config.py]
   summary: Unified search queue bar into a single full-width action button. Hid live mirror status panel by default (only Cover Preview visible). Added floating toast notification when toggling cats and stats via 3x version badge click.

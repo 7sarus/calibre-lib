@@ -673,8 +673,9 @@ class LibgenScraper:
                 total_bytes = 0
     
             bytes_read = 0
-            chunk_size = 128 * 1024  # 128 KB
+            chunk_size = 512 * 1024  # 512 KB buffer for high-throughput streaming
             start_time = time.time()
+
             last_cb_time = 0.0
     
             with open(destination_path, "wb") as f:
@@ -886,8 +887,9 @@ class LibgenScraper:
                 raise Exception("Stopped by user")
 
             bytes_written = 0
-            chunk_size = 128 * 1024
+            chunk_size = 512 * 1024  # 512 KB buffer for segment streaming
             start_time = time.time()
+
             try:
                 b = self._get_browser()
                 req = mechanize.Request(
@@ -1031,8 +1033,9 @@ class LibgenScraper:
             with open(destination_path, "wb") as outfile:
                 for part_path in part_paths:
                     with open(part_path, "rb") as infile:
-                        shutil.copyfileobj(infile, outfile, length=128 * 1024)
+                        shutil.copyfileobj(infile, outfile, length=512 * 1024)
                     try:
+
                         os.remove(part_path)
                     except Exception:
                         pass
