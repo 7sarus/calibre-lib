@@ -672,20 +672,21 @@ class LibgenScraper:
         except Exception:
             return None, None
 
-    def download_file(self, download_url, destination_path, progress_callback=None, abort_check=None):
+    def download_file(self, download_url, destination_path, progress_callback=None, abort_check=None, referer=None):
         """
         Streams a remote file to destination_path with chunked writing.
         Calls progress_callback(bytes_read, total_bytes) on each chunk.
         """
         import mechanize
         b = self._get_browser()
-        cdn_origin = f"https://{urlparse(download_url).netloc}"
+        parsed_dl = urlparse(download_url)
+        ref_header = referer or f"{parsed_dl.scheme}://{parsed_dl.netloc}/"
         req = mechanize.Request(
             download_url,
             headers={
                 "User-Agent": self.USER_AGENT,
                 "Connection": "keep-alive",
-                "Referer": cdn_origin + "/",
+                "Referer": ref_header,
                 "Accept": "*/*",
                 "Accept-Encoding": "identity",
             },
@@ -900,10 +901,11 @@ class LibgenScraper:
         progress_chunk_cb=None,
         abort_check=None,
         user_agent=None,
+        referer=None,
     ):
         """
         Downloads a byte range [start_byte, end_byte] to part_path with multi-source failover.
-        Uses per-segment User-Agent rotation and anti-throttle headers.
+        Uses per-segment User-Agent rotation and anti-throttle headers with correct mirror referer.
         """
         import mechanize
         expected_len = end_byte - start_byte + 1
@@ -920,9 +922,9 @@ class LibgenScraper:
 
             try:
                 b = self._get_browser()
-                # Build anti-throttle headers: rotated UA, keep-alive, and
-                # Referer pointing to the CDN host (bypasses hotlink checks).
-                cdn_origin = f"https://{urlparse(stream_url).netloc}"
+                # Use provided mirror referer, or fallback to mirror origin
+                parsed_stream = urlparse(stream_url)
+                ref_header = referer or f"{parsed_stream.scheme}://{parsed_stream.netloc}/"
                 req = mechanize.Request(
                     stream_url,
                     headers={
@@ -930,7 +932,7 @@ class LibgenScraper:
                         "Accept-Encoding": "identity",
                         "User-Agent": ua,
                         "Connection": "keep-alive",
-                        "Referer": cdn_origin + "/",
+                        "Referer": ref_header,
                         "Accept": "*/*",
                     },
                 )
@@ -993,15 +995,14 @@ class LibgenScraper:
         Executes parallel segmented download across multiple working mirrors,
         pieces the parts together, and verifies integrity.
         """
-        # Decouple segment count from source count: even a single CDN URL
-        # benefits from 8 parallel range-request connections because CDNs
-        # throttle per-connection, not per-IP.
-        min_segments = 4
-        max_segments = 8
-        if total_bytes < 512 * 1024:
-            num_segments = min_segments
+        # Empirical benchmark results on booksdl.lc (Cloudflare):
+        # 8 concurrent segments triggers HTTP 503 / read timeouts from connection flood.
+        # 2 to 3 concurrent connections is the sweet spot that delivers stable 40-60 KB/s
+        # without triggering CDN rate-limiting defenses.
+        if total_bytes < 2 * 1024 * 1024:
+            num_segments = 2
         else:
-            num_segments = max_segments
+            num_segments = min(3, max(2, len(range_sources)))
         part_size = total_bytes // num_segments
         ranges = []
         for i in range(num_segments):
@@ -1039,6 +1040,10 @@ class LibgenScraper:
                         progress_callback(current, total_bytes, speed_kb)
                         last_cb[0] = now
 
+        primary_source = ranked_sources[0]
+        mirror_host = primary_source.get("host") or urlparse(primary_source.get("detail_url", "")).netloc
+        mirror_referer = f"https://{mirror_host}/" if mirror_host else None
+
         part_paths = [f"{destination_path}.part{i}" for i in range(num_segments)]
 
         def worker(idx):
@@ -1055,6 +1060,7 @@ class LibgenScraper:
                 progress_chunk_cb=on_chunk,
                 abort_check=abort_check,
                 user_agent=seg_ua,
+                referer=mirror_referer,
             )
 
         try:
@@ -1300,6 +1306,7 @@ class LibgenScraper:
                         destination_path,
                         progress_callback=progress_callback,
                         abort_check=abort_check,
+                        referer=f"https://{host}/",
                     )
                     if log_callback:
                         log_callback(f"✓ Download completed successfully via {host}.")
@@ -1371,6 +1378,7 @@ class LibgenScraper:
                     destination_path,
                     progress_callback=progress_callback,
                     abort_check=abort_check,
+                    referer=f"https://{host}/",
                 )
                 if log_callback:
                     log_callback(f"✓ Download completed successfully via {host}.")
