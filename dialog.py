@@ -2913,6 +2913,9 @@ class LibgenDialog(QDialog):
     def select_all_results(self):
         self.results_table.selectAll()
 
+    def deselect_all_results(self):
+        self.results_table.clearSelection()
+
     def clear_search_results(self):
         if not self.search_results:
             return
