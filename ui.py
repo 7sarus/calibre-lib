@@ -17,8 +17,13 @@ class LibgenAction(InterfaceAction):
     action_type = "current"
 
     def genesis(self):
-        self.qaction.setText("LibGen")
-        self.qaction.setToolTip("Search, queue, and download books from LibGen directly into Calibre")
+        try:
+            from calibre_plugins.libgen_store.config import PLUGIN_VERSION_STR
+        except Exception:
+            from config import PLUGIN_VERSION_STR
+
+        self.qaction.setText(f"LibGen ({PLUGIN_VERSION_STR})")
+        self.qaction.setToolTip(f"LibGen Downloader {PLUGIN_VERSION_STR} - Search, queue, and download books directly into Calibre")
 
         # Load plugin toolbar icon from zipped resources
         self.icon = QIcon()
