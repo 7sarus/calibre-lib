@@ -2276,6 +2276,9 @@ class LibgenDialog(QDialog):
         self.version_click_count = 0
 
     def on_version_badge_clicked(self, event):
+        if event and event.button() == Qt.MouseButton.RightButton:
+            self.show_backend_context_menu(event.pos())
+            return
         self.version_click_count += 1
         self.version_click_timer.start()
         if self.version_click_count >= 3:
