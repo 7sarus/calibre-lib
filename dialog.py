@@ -77,6 +77,34 @@ MONO_PANEL_STYLE = (
     "font-size: 11px; padding: 6px; border: 1px solid palette(mid); border-radius: 4px;"
 )
 
+class ToastOverlay(QLabel):
+    """Lightweight non-blocking floating toast notification."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet(
+            "background-color: rgba(20, 24, 30, 230); color: #00d4aa; "
+            "border: 1px solid #00d4aa; border-radius: 6px; "
+            "padding: 8px 16px; font-weight: 600; font-size: 12px;"
+        )
+        self.hide()
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self.hide)
+
+    def show_toast(self, text, duration_ms=2200):
+        self.setText(text)
+        self.adjustSize()
+        if self.parent():
+            p_geom = self.parent().rect()
+            x = (p_geom.width() - self.width()) // 2
+            y = p_geom.height() - self.height() - 48
+            self.move(max(10, x), max(10, y))
+        self.raise_()
+        self.show()
+        self._timer.start(duration_ms)
+
+
 try:
     from calibre_plugins.libgen_store.progress_delegate import ProgressBarDelegate
 except ImportError:
@@ -1560,13 +1588,18 @@ class LibgenDialog(QDialog):
         self.side_neko_label.setVisible(self.show_cats)
         right_layout.addWidget(self.side_neko_label)
 
-        right_layout.addWidget(QLabel("<b>Live Mirror Status</b>"))
+        self.side_mirror_header = QLabel("<b>Live Mirror Status</b>")
+        self.side_mirror_header.setVisible(self.show_stats)
+        right_layout.addWidget(self.side_mirror_header)
+
         self.side_mirror_status = QPlainTextEdit(self)
         self.side_mirror_status.setReadOnly(True)
         self.side_mirror_status.setFixedWidth(200)
         self.side_mirror_status.setStyleSheet(MONO_PANEL_STYLE)
+        self.side_mirror_status.setVisible(self.show_stats)
         right_layout.addWidget(self.side_mirror_status)
         base_layout.addWidget(right_widget, stretch=1)
+
 
         # Top Panel: Clean Primary Search Bar + Collapsible Advanced Drawer
         top_panel = QVBoxLayout()
@@ -1760,13 +1793,13 @@ class LibgenDialog(QDialog):
         )
 
         n_books = len(self.selected_books)
-        self.queue_info_label = QLabel(f"📚 <b>{n_books} Calibre record(s)</b> loaded into Search Queue", self)
-        queue_bar_layout.addWidget(self.queue_info_label)
-
-        self.start_queue_search_btn = QPushButton(f"▶ Search All ({n_books}) Records (Max 2/book)", self)
+        self.start_queue_search_btn = QPushButton(
+            f"📚 Search {n_books} Loaded Calibre Record(s) in Queue (1 match/book)", self
+        )
         self.start_queue_search_btn.setStyleSheet(PRIMARY_BUTTON_STYLE)
         self.start_queue_search_btn.clicked.connect(self.start_search_queue)
-        queue_bar_layout.addWidget(self.start_queue_search_btn)
+        queue_bar_layout.addWidget(self.start_queue_search_btn, stretch=1)
+
 
         self.stop_queue_search_btn = QPushButton("Stop Queue Search", self)
         self.stop_queue_search_btn.setStyleSheet(DANGER_BUTTON_STYLE)
@@ -2092,6 +2125,8 @@ class LibgenDialog(QDialog):
 
         main_layout.addLayout(status_bar)
 
+        self.toast = ToastOverlay(self)
+
         self.restore_header_states()
         self.update_pending_combo()
 
@@ -2224,9 +2259,17 @@ class LibgenDialog(QDialog):
                 self.neko_label.setVisible(self.show_cats)
             if hasattr(self, "side_neko_label"):
                 self.side_neko_label.setVisible(self.show_cats)
+            if hasattr(self, "side_mirror_header"):
+                self.side_mirror_header.setVisible(self.show_stats)
+            if hasattr(self, "side_mirror_status"):
+                self.side_mirror_status.setVisible(self.show_stats)
             status_msg = "enabled" if self.show_stats else "disabled"
             self.status_label.setText(f"Cats and stats {status_msg}.")
             self.append_log(f"[CONFIG] Cats and download stats {status_msg} (toggled via version badge).")
+            if hasattr(self, "toast"):
+                toast_icon = "🐾" if self.show_stats else "🙈"
+                self.toast.show_toast(f"{toast_icon} Cats, Stats & Mirror Panel {status_msg.capitalize()}")
+
 
     def _update_version_badge_style(self):
         if not hasattr(self, "version_badge"):
@@ -2636,14 +2679,16 @@ class LibgenDialog(QDialog):
             return
         n_books = len(self.selected_books) if hasattr(self, "selected_books") and self.selected_books else 0
         if n_books > 0:
-            self.queue_info_label.setText(f"📚 <b>{n_books} record(s)</b> loaded into Search Queue")
-            self.start_queue_search_btn.setText(f"▶ Search All ({n_books}) Records (Max 2/book)")
+            if hasattr(self, "queue_info_label"):
+                self.queue_info_label.setVisible(False)
+            self.start_queue_search_btn.setText(f"📚 Search {n_books} Loaded Calibre Record(s) in Queue (1 match/book)")
             self.start_queue_search_btn.setEnabled(True)
             self.start_queue_search_btn.setVisible(True)
             self.stop_queue_search_btn.setVisible(False)
             self.search_queue_bar.setVisible(True)
         else:
             self.search_queue_bar.setVisible(False)
+
 
     def dismiss_search_queue_bar(self):
         self.selected_books = []

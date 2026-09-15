@@ -8,7 +8,15 @@ updated: 2026-09-15
 
 ## 2026-09-15
 
+- id: unify-search-queue-bar-and-hide-mirror-status-toast
+  type: feat
+  files: [dialog.py, config.py]
+  summary: Unified search queue bar into a single full-width action button. Hid live mirror status panel by default (only Cover Preview visible). Added floating toast notification when toggling cats and stats via 3x version badge click.
+  why: User requested unifying split queue bar buttons, keeping only cover preview active by default, and showing toast on badge toggle.
+  validation: python3 -m py_compile dialog.py passed; 9/9 unit tests pass
+
 - id: fix-collections-import-dialog
+
   type: fix
   files: [dialog.py, config.py]
   summary: Imported collections module in dialog.py to resolve NameError when initializing pending_queue deque.
