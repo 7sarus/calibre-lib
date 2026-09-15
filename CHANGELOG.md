@@ -1,7 +1,18 @@
 # Changelog
 
-## [v1.11b] - 2026-09-15
+## [v1.50] - 2026-09-15
 
+### Highlights
+- **Hardcover Reading Lists:** Sync "Want to Read" and custom shelves straight into your download queue with automatic duplicate detection.
+- **Search Existing Library Books:** Highlight books in Calibre and batch-search working mirrors without manual typing.
+- **Optimized Download Speeds:** 512 KB streaming buffers, smart connection limits, and automatic Cloudflare 503 bypasses for reliable transfers.
+- **Modernized UI & Live Metrics:** Real-time speed tiers, exact MB transferred, ETA countdowns, and movable tabs.
+- **Instant Mirror Failover:** Automatic fallback to fastest responsive mirrors with live latency indicators.
+
+### Detailed Changes
+- **Hardcover Reading List & Shelf Downloader:** Directly sync personal reading lists and shelves ("Want to Read", "Currently Reading", custom lists) via Hardcover.app API token. Includes automatic skipping of books already in your Calibre library, ISBN matching, and one-click queue staging.
+- **Search Selected Calibre Book Records:** Select one or multiple books in your Calibre library and click "Search Record(s)" to initiate an automated serialized search queue across mirrors without typing queries.
+- **Configurable Download Concurrency & 512 KB Buffer:** New UI spinbox for concurrent file downloads (1–4), defaulted to 1 to maximize bandwidth concentration and defeat CDN rate-limiting, backed by quadrupled 512 KB transfer buffers.
 - **Streamlined Top Search Bar:** Clean primary row with search input, format, language, search, and Hardcover; secondary parameters tucked into an expandable `[⚙ Filters ▾]` drawer that persists its state across sessions.
 - **Modern Vector Progress Bars & Verbose Metrics:** Replaced retro ASCII bars with native `ProgressBarDelegate` rendering smooth rounded progress bars showing detailed bytes transferred (`MB / MB`), live speed icons (`⚡`, `🚀`, `📥`), and ETA countdowns.
 - **Dedicated Bulk Download Progress Bar:** Added an overall session progress bar in the Queue tab showing batch completion (`X / Y books (Z%)`), speed, and ETA.
