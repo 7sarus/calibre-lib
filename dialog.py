@@ -139,6 +139,7 @@ try:
         add_pending_search,
         remove_pending_search,
         clear_pending_searches,
+        get_active_backend,
     )
     from calibre_plugins.libgen_store.scraper import LibgenScraper, LibgenBook, get_scraper
 except (ImportError, ModuleNotFoundError):
@@ -169,6 +170,7 @@ except (ImportError, ModuleNotFoundError):
         add_pending_search,
         remove_pending_search,
         clear_pending_searches,
+        get_active_backend,
     )
     from scraper import LibgenScraper, LibgenBook, get_scraper
 
@@ -789,7 +791,8 @@ class BulkDownloadWorker(QThread):
                         self.link_trying.emit(idx, url, stage)
 
                     try:
-                        allow_br = prefs.get("bookracy_auto_retry_failed", True)
+                        cur_backend = get_active_backend()
+                        allow_br = False if cur_backend == "bookracy" else prefs.get("bookracy_auto_retry_failed", True)
                         force_br = bool(item.get("force_bookracy", False))
                         dest_path, cover_url = scraper.resolve_and_download(
                             book.detail_url,
