@@ -170,7 +170,7 @@ CATEGORIES = {
 }
 
 # Helper functions for preferences access
-def get_mirror_pool():
+def get_mirrors():
     """Returns a list of mirror URLs combining primary, permanent, fallbacks, and custom mirrors."""
     primary = normalize_mirror_url(prefs.get("primary_mirror", "https://libgen.li"))
     raw_fallbacks = prefs.get("fallback_mirrors", "")
