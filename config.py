@@ -181,6 +181,8 @@ def get_mirrors():
     cleaned_custom = [normalize_mirror_url(m) for m in custom_list if m.strip()]
 
     backend = get_active_backend()
+    if backend == "bookracy":
+        return ["https://api.bookracy.com"]
 
     pool = []
     for m in [primary] + list(PERMANENT_MIRRORS) + cleaned_fallbacks + cleaned_custom:
