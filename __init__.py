@@ -12,7 +12,7 @@ class LibgenDownloaderPlugin(InterfaceActionBase):
     name = "LibGen Downloader"
     description = (
         "Dedicated UI to search, queue, and bulk-download books directly from Library Genesis "
-        "mirrors with language and format locking into Calibre."
+        "and Bookracy API backends into Calibre [Beta Edition]."
     )
     supported_platforms = ["windows", "osx", "linux"]
     author = "7sarus"
