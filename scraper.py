@@ -87,6 +87,19 @@ class LibgenScraper:
         "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0"
     )
 
+    # Diverse User-Agents for segment rotation — each parallel segment
+    # presents a different browser identity to defeat per-UA throttling.
+    _UA_POOL = [
+        "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+        "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:129.0) Gecko/20100101 Firefox/129.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    ]
+
     @staticmethod
     def fetch_live_mirrors():
         """Fetches active LibGen mirrors from open-slum.org tracker."""
@@ -664,8 +677,20 @@ class LibgenScraper:
         Streams a remote file to destination_path with chunked writing.
         Calls progress_callback(bytes_read, total_bytes) on each chunk.
         """
+        import mechanize
         b = self._get_browser()
-        with self._open_url(b, download_url, timeout=self.timeout * 3) as resp:
+        cdn_origin = f"https://{urlparse(download_url).netloc}"
+        req = mechanize.Request(
+            download_url,
+            headers={
+                "User-Agent": self.USER_AGENT,
+                "Connection": "keep-alive",
+                "Referer": cdn_origin + "/",
+                "Accept": "*/*",
+                "Accept-Encoding": "identity",
+            },
+        )
+        with self._open_url(b, req, timeout=self.timeout * 3) as resp:
             total_bytes = 0
             try:
                 total_bytes = int(resp.headers.get("Content-Length", 0))
@@ -874,13 +899,16 @@ class LibgenScraper:
         part_path,
         progress_chunk_cb=None,
         abort_check=None,
+        user_agent=None,
     ):
         """
         Downloads a byte range [start_byte, end_byte] to part_path with multi-source failover.
+        Uses per-segment User-Agent rotation and anti-throttle headers.
         """
         import mechanize
         expected_len = end_byte - start_byte + 1
         last_err = None
+        ua = user_agent or self.USER_AGENT
 
         for stream_url in candidate_stream_urls:
             if abort_check and abort_check():
@@ -892,12 +920,18 @@ class LibgenScraper:
 
             try:
                 b = self._get_browser()
+                # Build anti-throttle headers: rotated UA, keep-alive, and
+                # Referer pointing to the CDN host (bypasses hotlink checks).
+                cdn_origin = f"https://{urlparse(stream_url).netloc}"
                 req = mechanize.Request(
                     stream_url,
                     headers={
                         "Range": f"bytes={start_byte}-{end_byte}",
                         "Accept-Encoding": "identity",
-                        "User-Agent": self.USER_AGENT,
+                        "User-Agent": ua,
+                        "Connection": "keep-alive",
+                        "Referer": cdn_origin + "/",
+                        "Accept": "*/*",
                     },
                 )
                 with self._open_url(b, req, timeout=self.timeout * 2) as resp:
@@ -959,7 +993,15 @@ class LibgenScraper:
         Executes parallel segmented download across multiple working mirrors,
         pieces the parts together, and verifies integrity.
         """
-        num_segments = min(len(range_sources), 4)
+        # Decouple segment count from source count: even a single CDN URL
+        # benefits from 8 parallel range-request connections because CDNs
+        # throttle per-connection, not per-IP.
+        min_segments = 4
+        max_segments = 8
+        if total_bytes < 512 * 1024:
+            num_segments = min_segments
+        else:
+            num_segments = max_segments
         part_size = total_bytes // num_segments
         ranges = []
         for i in range(num_segments):
@@ -968,10 +1010,10 @@ class LibgenScraper:
             ranges.append((start, end))
 
         ranked_sources = self._rank_sources_by_throughput(range_sources)
-        source_hosts = [urlparse(s["stream_url"]).netloc or s["host"] for s in ranked_sources[:num_segments]]
+        source_hosts = list({urlparse(s["stream_url"]).netloc or s["host"] for s in ranked_sources})
         if log_callback:
             log_callback(
-                f"⚡ Piece-together active: {num_segments} parallel segments across {', '.join(source_hosts)}"
+                f"⚡ Piece-together active: {num_segments} parallel segments across {', '.join(source_hosts)} (UA rotation on)"
             )
 
         if link_callback:
@@ -1003,6 +1045,8 @@ class LibgenScraper:
             start, end = ranges[idx]
             rotated_urls = all_stream_urls[idx:] + all_stream_urls[:idx]
             part_path = part_paths[idx]
+            # Each segment gets a distinct User-Agent from the pool
+            seg_ua = self._UA_POOL[idx % len(self._UA_POOL)]
             return self._download_segment(
                 rotated_urls,
                 start,
@@ -1010,6 +1054,7 @@ class LibgenScraper:
                 part_path,
                 progress_chunk_cb=on_chunk,
                 abort_check=abort_check,
+                user_agent=seg_ua,
             )
 
         try:
@@ -1159,9 +1204,10 @@ class LibgenScraper:
                         working_sources.append(res)
                         if log_callback:
                             log_callback(f"✓ Mirror {res['host']} online (size: {res['total_bytes']:,} bytes, range: {res['accepts_ranges']})")
-                        # Two independent streams are enough to start; slow probes
-                        # must not delay the transfer behind their full timeouts.
-                        if len({s['stream_url'] for s in working_sources}) >= 2:
+                        # One working stream is enough — segmented download
+                        # now works with a single CDN source via parallel
+                        # range requests with rotated User-Agents.
+                        if len({s['stream_url'] for s in working_sources}) >= 1:
                             break
                 except Exception:
                     pass
@@ -1174,10 +1220,12 @@ class LibgenScraper:
         if fast_mode and not working_sources:
             raise Exception("Skipped (troubled / unresponsive mirrors in fast mode)")
 
-        # Step 2: Check if multi-mirror segmented piece-together is viable
+        # Step 2: Check if multi-segment parallel download is viable
+        # Lowered threshold: segmented mode benefits even small files because
+        # the CDN throttles per-connection bandwidth.
         range_sources = [
             s for s in working_sources
-            if s.get("accepts_ranges") and s.get("total_bytes", 0) > 200 * 1024
+            if s.get("accepts_ranges") and s.get("total_bytes", 0) > 50 * 1024
         ]
 
         # Only combine equal-sized objects, and avoid duplicate CDN streams.
@@ -1189,7 +1237,32 @@ class LibgenScraper:
                     unique_sources.setdefault(source["stream_url"], source)
             range_sources = list(unique_sources.values())
 
-        if len(range_sources) >= 2:
+            # Expand CDN hostnames: if we have cdn2.booksdl.lc, also try
+            # cdn1, cdn3, cdn4 — same file is often mirrored across edges.
+            expanded = list(range_sources)
+            for src in range_sources:
+                parsed_stream = urlparse(src["stream_url"])
+                host = parsed_stream.netloc
+                # Match cdn<N>.domain pattern
+                import re as _re
+                cdn_match = _re.match(r'^cdn(\d+)\.(.+)$', host)
+                if cdn_match:
+                    base_domain = cdn_match.group(2)
+                    for n in range(1, 5):
+                        alt_host = f"cdn{n}.{base_domain}"
+                        if alt_host == host:
+                            continue
+                        alt_url = parsed_stream._replace(netloc=alt_host).geturl()
+                        if alt_url not in {s["stream_url"] for s in expanded}:
+                            alt_src = dict(src)
+                            alt_src["stream_url"] = alt_url
+                            alt_src["host"] = alt_host
+                            expanded.append(alt_src)
+            range_sources = expanded
+
+        # Single source is sufficient — we split byte ranges across 8 parallel
+        # connections to the same CDN, each with a rotated User-Agent.
+        if len(range_sources) >= 1:
             try:
                 total_bytes = range_sources[0]["total_bytes"]
                 cover_url = next((s["cover_url"] for s in range_sources if s.get("cover_url")), None)
