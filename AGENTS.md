@@ -44,7 +44,7 @@ When the user says `note it` or `note`, or when a meaningful breakthrough/fix is
 
 - Write terse Obsidian notes under `/home/thomas/Documents/tech/`.
 - Use kebab-case filenames and YAML frontmatter with tags and date.
-- Link notes from `Tech Index.md` and `New-Dots Backlog.md`.
+- Link notes from `Tech Index.md` and `New-Dots Backlog.md`, and add at least 1–2 direct horizontal cross-links to related technical notes across domains.
 - Update `Dashboard.md` when project status, daily activity, metrics, release state, or major learned concepts change.
 - Update the relevant project tracker under `/home/thomas/Documents/tech/projects/` when present.
 - Track resolved issues in a timeline file with attribution and running cumulative score.

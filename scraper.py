@@ -1662,8 +1662,10 @@ class BookracyProvider:
     def search(
         self,
         query,
+        search_field="",
         field="",
         category="",
+        selected_mirror=None,
         max_results=5,
         preferred_language="Any",
         preferred_format="Any",
@@ -1672,6 +1674,8 @@ class BookracyProvider:
         progress_callback=None,
         abort_check=None,
         partial_results_callback=None,
+        auto_field_fallback=True,
+        **kwargs,
     ):
         import json
         if not query or not query.strip():
