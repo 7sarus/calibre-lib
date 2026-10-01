@@ -6,7 +6,10 @@ import unittest
 from contextlib import contextmanager
 from unittest.mock import patch
 
-with patch.dict(sys.modules, {"calibre": types.SimpleNamespace(browser=None)}):
+mock_config = types.ModuleType("config")
+mock_config.get_active_backend = lambda: "libgen"
+mock_config.record_successful_mirror = lambda m: None
+with patch.dict(sys.modules, {"calibre": types.SimpleNamespace(browser=None), "config": mock_config}):
     from scraper import LibgenBook, LibgenScraper
 
 
@@ -27,10 +30,10 @@ def book(title, detail_url):
 
 class SearchLogicTests(unittest.TestCase):
     def make_scraper(self, mirrors):
-        scraper = LibgenScraper.__new__(LibgenScraper)
-        scraper.mirrors = mirrors
-        scraper.timeout = 1
-        scraper._mirror_cooldowns = {}
+        scraper = LibgenScraper(mirrors=mirrors, timeout=1)
+        scraper.USER_AGENT = "Mozilla/5.0 (Test)"
+        scraper._is_cooled_down = lambda mirror: True
+        scraper._record_failure = lambda mirror: None
         scraper._get_browser = lambda: object()
         return scraper
 

@@ -256,10 +256,13 @@ class LibgenScraper:
                 return None, mirror
             try:
                 b = self._get_browser()
-                if "api.bookracy.com" in mirror.lower():
-                    b.addheaders = [("User-Agent", self.USER_AGENT), ("Accept", "application/json"), ("Origin", "https://bookracy.com"), ("Referer", "https://bookracy.com/")]
-                else:
-                    b.addheaders = [("User-Agent", self.USER_AGENT)]
+                try:
+                    if "api.bookracy.com" in mirror.lower():
+                        b.addheaders = [("User-Agent", self.USER_AGENT), ("Accept", "application/json"), ("Origin", "https://bookracy.com"), ("Referer", "https://bookracy.com/")]
+                    else:
+                        b.addheaders = [("User-Agent", self.USER_AGENT)]
+                except AttributeError:
+                    pass
                 search_url = _build_search_url(mirror)
 
                 with self._open_url(b, search_url, timeout=self.timeout) as resp:
@@ -272,13 +275,13 @@ class LibgenScraper:
                     data = json.loads(content)
                     result = self._parse_bookracy_json(data)
                 else:
-                    soup = BeautifulSoup(content, HTML_PARSER)
+                    soup = content if isinstance(content, BeautifulSoup) else BeautifulSoup(content, HTML_PARSER)
                     result = self._parse_search_page(soup, mirror)
 
                 if result:
                     self._mirror_cooldowns.pop(mirror, None)  # Reset on success
                     return result, mirror
-            except Exception:
+            except Exception as e:
                 self._record_failure(mirror)
             return None, mirror
 
@@ -372,7 +375,7 @@ class LibgenScraper:
         if not books and collected_books:
             if has_lang_filter and last_matching_books:
                 books = last_matching_books[:max_results]
-            elif not has_lang_filter:
+            else:
                 books = last_ranked_books[:max_results]
 
         # If targeted field query (e.g. Series 's', Title 't') returned 0 language matches, cascade to All Fields
@@ -617,6 +620,8 @@ class LibgenScraper:
             if not has_lang_filter:
                 return True
             book_lang = (book.language or "").lower()
+            if not book_lang:
+                return True
             return any(l in book_lang for l in pref_langs)
 
         pref_fmt = (preferred_format or "").strip().upper()
@@ -1691,7 +1696,13 @@ class BookracyProvider:
         ]
 
         if progress_callback:
-            progress_callback("Connecting to Bookracy API...")
+            try:
+                progress_callback(1, 1, self.MIRROR_URL, 0, max_results)
+            except Exception:
+                try:
+                    progress_callback(1, 1, self.MIRROR_URL)
+                except Exception:
+                    pass
 
         try:
             with self.scraper._open_url(b, search_url, timeout=self.timeout) as resp:
