@@ -457,8 +457,8 @@ class LibgenScraper:
                         first_link = cells[8].find("a")
                 else:
                     continue
-                    if first_link and first_link.get("href"):
-                        detail_url = urljoin(mirror, first_link["href"])
+                if first_link and first_link.get("href"):
+                    detail_url = urljoin(mirror, first_link["href"])
 
                 if not title:
                     continue

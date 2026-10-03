@@ -22,7 +22,7 @@ except ImportError:
     from scraper import LibgenScraper, LibgenBook, get_scraper
 
 def sanitize_filename(name):
-    return re.sub(r"[\\/*?:\"<>|]", "", name).strip()[:100]
+    return re.sub(r"[\\/*?:\"<>|]", "", str(name)).strip()[:100]
 
 # --- END IMPORTS ---
 
@@ -421,9 +421,10 @@ class BulkDownloadWorker(QThread):
     link_trying = pyqtSignal(int, str, str)        # index, url, stage ("resolving" or "streaming")
     all_done = pyqtSignal(list, int, bool)         # downloaded_items, fail_count, is_aborted
 
-    def __init__(self, items, auto_retry=False, fast_mode=False, download_dir=None, concurrent_files=1, parent=None):
+    def __init__(self, items, target_indices=None, auto_retry=False, fast_mode=False, download_dir=None, concurrent_files=1, parent=None):
         super().__init__(parent)
         self.items = items
+        self.target_indices = target_indices
         self.auto_retry = auto_retry
         self.fast_mode = fast_mode
         self.download_dir = download_dir
@@ -452,91 +453,101 @@ class BulkDownloadWorker(QThread):
                 fail_count = 0
                 any_processed = False
 
-                pending_items = [(idx, i) for idx, i in enumerate(self.items) if i.get("status") not in ("✓ Added to Library", "Downloaded", "✓ Downloaded (Pending Review)")]
+                pending_items = [(idx, i) for idx, i in enumerate(self.items) if i.get("status") not in ("✓ Added to Library", "Downloaded", "✓ Downloaded (Pending Review)") and (self.target_indices is None or idx in self.target_indices)]
                 total_pending = len(pending_items)
                 current_num = [0]
                 dl_lock = threading.Lock()
                 fail_count_ref = [0]
 
                 def process_item(idx, item):
-                    if self._is_aborted:
-                        return
-
-                    book = item["book"]
-                    with dl_lock:
-                        current_num[0] += 1
-                        c_num = current_num[0]
-
-                    ts = time.strftime('%H:%M:%S')
-                    short_title = (book.title or "Unknown")[:45]
-                    self.log_message.emit(f"[{ts}] [{c_num}/{total_pending}] Starting: \"{short_title}\"")
-                    self.item_status.emit(idx, "Resolving mirror link...")
-
-                    ext = (book.extension or "epub").lower()
-                    safe_title = sanitize_filename(book.title or "Unknown")
-                    safe_author = sanitize_filename(book.author or "Unknown")
-                    base_dest_file = os.path.join(download_dir, f"{safe_title} - {safe_author}.{ext}")
-                    dest_file = base_dest_file
-                    suffix = 1
-                    while os.path.exists(dest_file):
-                        dest_file = os.path.join(download_dir, f"{safe_title} - {safe_author} ({suffix}).{ext}")
-                        suffix += 1
-
-                    def on_log(msg):
-                        t_now = time.strftime('%H:%M:%S')
-                        self.log_message.emit(f"[{t_now}] {msg}")
-
-                    def on_progress(bytes_read, total, speed_kb=0.0):
-                        self.item_progress.emit(idx, bytes_read, total, float(speed_kb))
-
-                    def on_link(url, stage):
-                        self.link_trying.emit(idx, url, stage)
-
                     try:
-                        cur_backend = get_active_backend()
-                        allow_br = (cur_backend == "dual" and prefs.get("bookracy_auto_retry_failed", True))
-                        force_br = bool(item.get("force_bookracy", False))
-                        dest_path, cover_url = scraper.resolve_and_download(
-                            book.detail_url,
-                            dest_file,
-                            book_title=book.title,
-                            book_author=book.author,
-                            book_ext=book.extension,
-                            log_callback=on_log,
-                            progress_callback=on_progress,
-                            link_callback=on_link,
-                            abort_check=lambda: self._is_aborted,
-                            fast_mode=self.fast_mode,
-                            allow_bookracy=allow_br,
-                            force_bookracy=force_br,
-                        )
-                        self.item_status.emit(idx, f"✓ Downloaded (Pending Review)|{dest_path}")
-                        with dl_lock:
-                            downloaded_items.append({
-                                "index": idx,
-                                "book": book,
-                                "file_path": dest_path,
-                            })
-                    except Exception as e:
-                        err_msg = str(e)
-                        if "stopped by user" in err_msg.lower() or self._is_aborted:
-                            if os.path.exists(dest_file):
-                                try:
-                                    os.remove(dest_file)
-                                except Exception:
-                                    pass
-                            self.item_status.emit(idx, "Stopped")
-                            on_log(f"⚠ Stopped downloading \"{short_title}\" by user request.")
+                        if self._is_aborted:
                             return
+
+                        book = item["book"]
+                        with dl_lock:
+                            current_num[0] += 1
+                            c_num = current_num[0]
+
+                        ts = time.strftime('%H:%M:%S')
+                        short_title = (book.title or "Unknown")[:45]
+                        self.log_message.emit(f"[{ts}] [{c_num}/{total_pending}] Starting: \"{short_title}\"")
+                        self.item_status.emit(idx, "Resolving mirror link...")
+
+                        ext = (book.extension or "epub").lower()
+                        safe_title = sanitize_filename(book.title or "Unknown")
+                        safe_author = sanitize_filename(book.author or "Unknown")
+                        base_dest_file = os.path.join(download_dir, f"{safe_title} - {safe_author}.{ext}")
+                        dest_file = base_dest_file
+                        suffix = 1
+                        while os.path.exists(dest_file):
+                            dest_file = os.path.join(download_dir, f"{safe_title} - {safe_author} ({suffix}).{ext}")
+                            suffix += 1
+
+                        def on_log(msg):
+                            t_now = time.strftime('%H:%M:%S')
+                            self.log_message.emit(f"[{t_now}] {msg}")
+
+                        def on_progress(bytes_read, total, speed_kb=0.0):
+                            self.item_progress.emit(idx, bytes_read, total, float(speed_kb))
+
+                        def on_link(url, stage):
+                            self.link_trying.emit(idx, url, stage)
+
+                        try:
+                            cur_backend = get_active_backend()
+                            allow_br = (cur_backend == "dual" and prefs.get("bookracy_auto_retry_failed", True))
+                            force_br = bool(item.get("force_bookracy", False))
+                            dest_path, cover_url = scraper.resolve_and_download(
+                                book.detail_url,
+                                dest_file,
+                                book_title=book.title,
+                                book_author=book.author,
+                                book_ext=book.extension,
+                                log_callback=on_log,
+                                progress_callback=on_progress,
+                                link_callback=on_link,
+                                abort_check=lambda: self._is_aborted,
+                                fast_mode=self.fast_mode,
+                                allow_bookracy=allow_br,
+                                force_bookracy=force_br,
+                            )
+                            self.item_status.emit(idx, f"✓ Downloaded (Pending Review)|{dest_path}")
+                            with dl_lock:
+                                downloaded_items.append({
+                                    "index": idx,
+                                    "book": book,
+                                    "file_path": dest_path,
+                                })
+                        except Exception as e:
+                            err_msg = str(e)
+                            if "stopped by user" in err_msg.lower() or self._is_aborted:
+                                if os.path.exists(dest_file):
+                                    try:
+                                        os.remove(dest_file)
+                                    except Exception:
+                                        pass
+                                self.item_status.emit(idx, "Stopped")
+                                on_log(f"⚠ Stopped downloading \"{short_title}\" by user request.")
+                                return
+                            self.item_status.emit(idx, f"Failed: {err_msg[:40]}")
+                            on_log(f"✗ Failed to download \"{short_title}\": {err_msg}")
+                            with dl_lock:
+                                fail_count_ref[0] += 1
+
+                    except Exception as e_outer:
+                        err_msg = str(e_outer)
                         self.item_status.emit(idx, f"Failed: {err_msg[:40]}")
-                        on_log(f"✗ Failed to download \"{short_title}\": {err_msg}")
+                        on_log(f"✗ Fatal error: {e_outer}")
                         with dl_lock:
                             fail_count_ref[0] += 1
-
                 with concurrent.futures.ThreadPoolExecutor(max_workers=self.concurrent_files) as pool:
                     futures = [pool.submit(process_item, idx, item) for idx, item in pending_items]
                     for fut in concurrent.futures.as_completed(futures):
-                        pass
+                        try:
+                            fut.result()
+                        except Exception as e:
+                            print(f"Uncaught thread exception: {e}")
 
             
                 fail_count = fail_count_ref[0]
