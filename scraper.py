@@ -1823,8 +1823,10 @@ class DualEngineProvider:
             cb = kwargs.get("log_callback")
             if cb:
                 cb(f"LibGen download failed ({e}). Retrying via Bookracy...")
+            md5_m = _RE_MD5.search(detail_url) if detail_url else None
+            current_md5 = md5_m.group(1) if md5_m else None
             br_url, br_cover = self.libgen._find_bookracy_fallback(
-                None, kwargs.get("book_title"), kwargs.get("book_author"), kwargs.get("book_ext"), cb
+                current_md5, kwargs.get("book_title"), kwargs.get("book_author"), kwargs.get("book_ext"), cb
             )
             if br_url:
                 return self.bookracy.resolve_and_download(br_url, destination_path, **kwargs)

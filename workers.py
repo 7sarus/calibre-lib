@@ -140,7 +140,8 @@ class SearchQueueWorker(QThread):
             isbn = rec.get("isbn", "")
             assigned_mirror = top_mirrors[(record_index - 1) % len(top_mirrors)]
             mirror_order = [assigned_mirror] + [m for m in self.mirrors if m.rstrip("/") != assigned_mirror.rstrip("/")]
-            scraper = LibgenScraper(mirrors=mirror_order, timeout=timeout_sec)
+            cur_bk = get_active_backend()
+            scraper = get_scraper(backend=cur_bk, mirrors=mirror_order, timeout=timeout_sec)
 
             label = f"{title} - {author}".strip(" -") or isbn or f"Record #{record_index}"
             host = urlparse(assigned_mirror).netloc or assigned_mirror

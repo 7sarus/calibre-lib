@@ -30,7 +30,7 @@ from qt.core import (
 # Plugin Version definitions
 PLUGIN_VERSION = (1, 5, 0)
 _BASE_VERSION_STR = "v1.50b"
-_BUILD_COMMIT = "146"
+_BUILD_COMMIT = "147"
 
 
 
@@ -680,6 +680,21 @@ class ConfigWidget(QWidget):
         super().__init__()
         self.layout = QVBoxLayout(self)
 
+        # Backend Engine Selection Group
+        backend_group = QGroupBox("Backend Engine Selection")
+        backend_layout = QFormLayout(backend_group)
+
+        self.backend_combo = QComboBox(self)
+        for code, name in BACKENDS.items():
+            self.backend_combo.addItem(name, code)
+        cur_bk = get_active_backend()
+        for i in range(self.backend_combo.count()):
+            if self.backend_combo.itemData(i) == cur_bk:
+                self.backend_combo.setCurrentIndex(i)
+                break
+        backend_layout.addRow("Active API Backend:", self.backend_combo)
+        self.layout.addWidget(backend_group)
+
         # Mirror Settings Group
         mirror_group = QGroupBox("Mirror Settings")
         mirror_layout = QFormLayout(mirror_group)
@@ -837,3 +852,6 @@ class ConfigWidget(QWidget):
         prefs["history_retention_days"] = self.retention_days_spin.value()
         prefs["bookracy_enabled"] = self.bookracy_enabled_cb.isChecked()
         prefs["bookracy_auto_retry_failed"] = self.bookracy_auto_retry_cb.isChecked()
+        chosen_bk = self.backend_combo.itemData(self.backend_combo.currentIndex())
+        if chosen_bk:
+            set_active_backend(chosen_bk)

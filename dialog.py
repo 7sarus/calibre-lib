@@ -1872,6 +1872,13 @@ class LibgenDialog(QDialog):
         except Exception:
             from config import set_active_backend
         set_active_backend(backend_code)
+        if hasattr(self, "backend_combo"):
+            for idx in range(self.backend_combo.count()):
+                if self.backend_combo.itemData(idx) == backend_code:
+                    self.backend_combo.blockSignals(True)
+                    self.backend_combo.setCurrentIndex(idx)
+                    self.backend_combo.blockSignals(False)
+                    break
         self.update_mirror_combobox()
         self.update_backend_ui_visibility()
         self.append_log(f"[CONFIG] Switched active API backend to: {title}")
@@ -2167,9 +2174,13 @@ class LibgenDialog(QDialog):
             if bk_data:
                 set_active_backend(bk_data)
                 self.update_mirror_combobox()
+                self.update_backend_ui_visibility()
                 name = BACKENDS.get(bk_data, bk_data)
                 m_count = len(get_mirrors())
                 self.status_label.setText(f"Active backend set to {name} ({m_count} mirror{'s' if m_count != 1 else ''})")
+                self.append_log(f"[CONFIG] Switched active API backend to: {name}")
+                if hasattr(self, "toast"):
+                    self.toast.show_toast(f"⚡ Backend: {name}")
 
     # --- Search Handlers ---
     def start_search(self):
