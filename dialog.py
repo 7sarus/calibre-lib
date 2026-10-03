@@ -1582,40 +1582,30 @@ class LibgenDialog(QDialog):
         top_panel = QVBoxLayout()
         top_panel.setSpacing(6)
 
-        # --- Row 1 (Primary Search Controls) ---
+        # --- Row 1 (Primary Search Controls: Unified Input + Backend Dropdown) ---
         row1 = QHBoxLayout()
-        row1.setSpacing(6)
+        row1.setSpacing(8)
 
-        row1.addWidget(QLabel("Search:"))
         self.search_input = QLineEdit(self)
-        self.search_input.setPlaceholderText("Search title, author, series, ISBN...")
+        self.search_input.setPlaceholderText("🔍 Search by title, author, or ISBN...")
         self.search_input.setClearButtonEnabled(True)
         self.search_input.returnPressed.connect(self.start_search)
         if self.initial_query:
             self.search_input.setText(self.initial_query)
             self.search_input.selectAll()
-        row1.addWidget(self.search_input, stretch=4)
+        row1.addWidget(self.search_input, stretch=6)
 
-        row1.addWidget(QLabel("Format:"))
-        self.format_combo = QComboBox(self)
-        self.format_combo.addItems(SUPPORTED_FORMATS)
-        cur_fmt = prefs.get("preferred_format", "Any").upper()
-        fmt_idx = self.format_combo.findText(cur_fmt)
-        if fmt_idx >= 0:
-            self.format_combo.setCurrentIndex(fmt_idx)
-        self.format_combo.currentTextChanged.connect(self.save_all_field_preferences)
-        row1.addWidget(self.format_combo)
-
-        row1.addWidget(QLabel("Lang:"))
-        self.lang_combo = CheckableComboBox(self)
-        self.lang_combo.setMinimumWidth(85)
-        saved_langs = prefs.get("preferred_languages")
-        if not saved_langs:
-            single = prefs.get("preferred_language", "English")
-            saved_langs = [single] if single else ["English"]
-        self.lang_combo.add_checkable_items(SUPPORTED_LANGUAGES, saved_langs)
-        self.lang_combo.selection_changed.connect(self.save_all_field_preferences)
-        row1.addWidget(self.lang_combo)
+        self.backend_combo = QComboBox(self)
+        self.backend_combo.addItem("Backend: LibGen", "libgen")
+        self.backend_combo.addItem("Backend: Bookracy", "bookracy")
+        self.backend_combo.addItem("Backend: Dual Engine (Failover)", "dual")
+        cur_bk = get_active_backend()
+        for idx in range(self.backend_combo.count()):
+            if self.backend_combo.itemData(idx) == cur_bk:
+                self.backend_combo.setCurrentIndex(idx)
+                break
+        self.backend_combo.currentIndexChanged.connect(self.on_backend_changed)
+        row1.addWidget(self.backend_combo, stretch=2)
 
         self.search_btn = QPushButton("Search", self)
         self.search_btn.setStyleSheet(PRIMARY_BUTTON_STYLE)
@@ -1629,7 +1619,7 @@ class LibgenDialog(QDialog):
         row1.addWidget(self.stop_search_btn)
 
         self.toggle_filters_btn = QPushButton("⚙ Filters ▾", self)
-        self.toggle_filters_btn.setToolTip("Toggle secondary search parameters (Field, Category, Mirror, Hardcover, History)")
+        self.toggle_filters_btn.setToolTip("Toggle secondary search parameters (Format, Language, Field, Category, Mirror, History)")
         self.toggle_filters_btn.setStyleSheet("padding: 5px 10px;")
         self.toggle_filters_btn.clicked.connect(self.toggle_advanced_filters)
         row1.addWidget(self.toggle_filters_btn)
@@ -1654,6 +1644,27 @@ class LibgenDialog(QDialog):
         self.import_csv_btn.setStyleSheet(COMPACT_BUTTON_STYLE)
         self.import_csv_btn.clicked.connect(self.open_csv_import_dialog)
         adv_row1.addWidget(self.import_csv_btn)
+
+        adv_row1.addWidget(QLabel("Format:"))
+        self.format_combo = QComboBox(self)
+        self.format_combo.addItems(SUPPORTED_FORMATS)
+        cur_fmt = prefs.get("preferred_format", "Any").upper()
+        fmt_idx = self.format_combo.findText(cur_fmt)
+        if fmt_idx >= 0:
+            self.format_combo.setCurrentIndex(fmt_idx)
+        self.format_combo.currentTextChanged.connect(self.save_all_field_preferences)
+        adv_row1.addWidget(self.format_combo)
+
+        adv_row1.addWidget(QLabel("Lang:"))
+        self.lang_combo = CheckableComboBox(self)
+        self.lang_combo.setMinimumWidth(85)
+        saved_langs = prefs.get("preferred_languages")
+        if not saved_langs:
+            single = prefs.get("preferred_language", "English")
+            saved_langs = [single] if single else ["English"]
+        self.lang_combo.add_checkable_items(SUPPORTED_LANGUAGES, saved_langs)
+        self.lang_combo.selection_changed.connect(self.save_all_field_preferences)
+        adv_row1.addWidget(self.lang_combo)
 
         self.field_label = QLabel("Field:")
         adv_row1.addWidget(self.field_label)
@@ -1686,24 +1697,24 @@ class LibgenDialog(QDialog):
         self.max_results_spinbox.setValue(int(prefs.get("max_results", 5)))
         self.max_results_spinbox.valueChanged.connect(self.save_all_field_preferences)
         adv_row1.addWidget(self.max_results_spinbox)
-
-        self.mirror_label = QLabel("Mirror:")
-        adv_row1.addWidget(self.mirror_label)
-        self.mirror_combo = QComboBox(self)
-        self.mirror_combo.setMaximumWidth(150)
-        self.update_mirror_combobox()
-        self.mirror_combo.currentTextChanged.connect(self.save_all_field_preferences)
-        adv_row1.addWidget(self.mirror_combo)
-
-        self.fetch_mirrors_btn = QPushButton("Fetch Live")
-        self.fetch_mirrors_btn.setToolTip("Fetch active mirrors from open-slum.org")
-        self.fetch_mirrors_btn.clicked.connect(self.manual_fetch_mirrors)
-        adv_row1.addWidget(self.fetch_mirrors_btn)
         adv_row1.addStretch(1)
         adv_vlayout.addLayout(adv_row1)
 
         adv_row2 = QHBoxLayout()
         adv_row2.setSpacing(8)
+
+        self.mirror_label = QLabel("Mirror:")
+        adv_row2.addWidget(self.mirror_label)
+        self.mirror_combo = QComboBox(self)
+        self.mirror_combo.setMaximumWidth(150)
+        self.update_mirror_combobox()
+        self.mirror_combo.currentTextChanged.connect(self.save_all_field_preferences)
+        adv_row2.addWidget(self.mirror_combo)
+
+        self.fetch_mirrors_btn = QPushButton("Fetch Live")
+        self.fetch_mirrors_btn.setToolTip("Fetch active mirrors from open-slum.org")
+        self.fetch_mirrors_btn.clicked.connect(self.manual_fetch_mirrors)
+        adv_row2.addWidget(self.fetch_mirrors_btn)
 
         self.filter_label = QLabel("Mode:")
         adv_row2.addWidget(self.filter_label)
@@ -2620,6 +2631,14 @@ class LibgenDialog(QDialog):
             self.toggle_filters_btn.setText("⚙ Filters ▴" if new_state else "⚙ Filters ▾")
         prefs["show_advanced_filters"] = new_state
 
+    def on_backend_changed(self, idx):
+        if hasattr(self, "backend_combo"):
+            bk_data = self.backend_combo.itemData(idx)
+            if bk_data:
+                set_active_backend(bk_data)
+                name = BACKENDS.get(bk_data, bk_data)
+                self.status_label.setText(f"Active backend set to {name}")
+
     # --- Search Handlers ---
     def start_search(self):
         query = self.search_input.text().strip()
@@ -2637,13 +2656,16 @@ class LibgenDialog(QDialog):
         self.stop_search_btn.setEnabled(True)
         self.stop_search_btn.setText("Stop Search")
 
+        cur_bk = get_active_backend()
+        bk_label = "Bookracy" if cur_bk == "bookracy" else ("Dual Engine" if cur_bk == "dual" else "LibGen")
+
         if hasattr(self, "search_progress_bar"):
             self.search_progress_bar.setVisible(True)
             self.search_progress_bar.setRange(0, 0)
-            self.search_progress_bar.setFormat(f"Searching LibGen mirrors for '{query}'...")
+            self.search_progress_bar.setFormat(f"Searching {bk_label} for '{query}'...")
 
-        self.status_label.setText(f"Searching LibGen for '{query}'...")
-        self.search_mirror_label.setText(f"Connecting to LibGen mirrors for '{query}'...")
+        self.status_label.setText(f"Searching {bk_label} for '{query}'...")
+        self.search_mirror_label.setText(f"Connecting to {bk_label} for '{query}'...")
 
         # Update saved preferences
         field_text = self.field_combo.currentText().strip()
