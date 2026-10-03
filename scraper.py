@@ -1787,6 +1787,7 @@ class DualEngineProvider:
         self.libgen = LibgenScraper(mirrors=mirrors, timeout=timeout)
         self.bookracy = BookracyProvider(timeout=timeout)
 
+    def search(self, query, **kwargs):
         results = self.libgen.search(query, **kwargs)
         if not results:
             log_cb = kwargs.get("log_callback")
