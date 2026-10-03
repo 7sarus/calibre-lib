@@ -2703,6 +2703,8 @@ class LibgenDialog(QDialog):
             self.log_toggle_btn.setText("▼ Live Activity Log" if show else "▶ Live Activity Log")
 
     def update_queue_table(self):
+        if not hasattr(self, 'queue_table'):
+            return
         self.queue_table.setUpdatesEnabled(False)
         try:
             self.queue_table.setRowCount(len(self.queue_manager))
