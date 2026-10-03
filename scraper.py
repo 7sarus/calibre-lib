@@ -1716,7 +1716,7 @@ class BookracyProvider:
 
         filtered = self.scraper._filter_and_rank(raw_books, preferred_language, preferred_format, filter_mode, query)
         if unique_results:
-            filtered = self.scraper.deduplicate_books(filtered)
+            filtered = self.scraper._deduplicate_books(filtered, preferred_format)
         results = filtered[:max_results]
         if partial_results_callback and results:
             partial_results_callback(results, self.MIRROR_URL)
