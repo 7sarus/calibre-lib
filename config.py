@@ -186,13 +186,11 @@ def get_mirrors():
 
     pool = []
     for m in [primary] + list(PERMANENT_MIRRORS) + cleaned_fallbacks + cleaned_custom:
-        if m and m not in pool:
+        if m and m != "https://api.bookracy.com" and m not in pool:
             pool.append(m)
 
-    if (backend == "dual" or prefs.get("bookracy_enabled", True)) and "https://api.bookracy.com" not in pool:
+    if backend == "dual" and "https://api.bookracy.com" not in pool:
         pool.append("https://api.bookracy.com")
-    elif backend != "dual" and not prefs.get("bookracy_enabled", True) and "https://api.bookracy.com" in pool:
-        pool.remove("https://api.bookracy.com")
 
     latencies = prefs.get("mirror_latencies", {})
     if not isinstance(latencies, dict):

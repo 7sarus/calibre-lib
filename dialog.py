@@ -140,6 +140,7 @@ try:
         remove_pending_search,
         clear_pending_searches,
         get_active_backend,
+        set_active_backend,
     )
     from calibre_plugins.libgen_store.scraper import LibgenScraper, LibgenBook, get_scraper
 except (ImportError, ModuleNotFoundError):
@@ -171,6 +172,7 @@ except (ImportError, ModuleNotFoundError):
         remove_pending_search,
         clear_pending_searches,
         get_active_backend,
+        set_active_backend,
     )
     from scraper import LibgenScraper, LibgenBook, get_scraper
 
@@ -2636,8 +2638,10 @@ class LibgenDialog(QDialog):
             bk_data = self.backend_combo.itemData(idx)
             if bk_data:
                 set_active_backend(bk_data)
+                self.update_mirror_combobox()
                 name = BACKENDS.get(bk_data, bk_data)
-                self.status_label.setText(f"Active backend set to {name}")
+                m_count = len(get_mirrors())
+                self.status_label.setText(f"Active backend set to {name} ({m_count} mirror{'s' if m_count != 1 else ''})")
 
     # --- Search Handlers ---
     def start_search(self):
