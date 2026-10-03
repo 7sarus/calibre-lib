@@ -70,14 +70,12 @@ class LibgenScraper:
         "https://libgen.li",
         "https://libgen.me",
         "https://libgen.vg",
-        "https://api.bookracy.com",
         "https://libgen.gl",
         "https://libgen.bz",
         "https://libgen.la",
     ]
 
     DEFAULT_FALLBACK_MIRRORS = (
-        "https://api.bookracy.com",
         "https://libgen.me",
         "https://libgen.vg",
         "https://libgen.gl",

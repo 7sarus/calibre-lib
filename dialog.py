@@ -792,7 +792,7 @@ class BulkDownloadWorker(QThread):
 
                     try:
                         cur_backend = get_active_backend()
-                        allow_br = False if cur_backend == "bookracy" else prefs.get("bookracy_auto_retry_failed", True)
+                        allow_br = (cur_backend == "dual" and prefs.get("bookracy_auto_retry_failed", True))
                         force_br = bool(item.get("force_bookracy", False))
                         dest_path, cover_url = scraper.resolve_and_download(
                             book.detail_url,
