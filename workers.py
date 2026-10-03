@@ -15,10 +15,10 @@ except ImportError:
     pass
 
 try:
-    from calibre_plugins.libgen_store.config import prefs, get_mirrors, get_active_backend, BACKENDS, get_cdn_url, update_mirror_latency
+    from calibre_plugins.libgen_store.config import prefs, get_mirrors, get_active_backend, BACKENDS
     from calibre_plugins.libgen_store.scraper import LibgenScraper, LibgenBook, get_scraper
 except ImportError:
-    from config import prefs, get_mirrors, get_active_backend, BACKENDS, get_cdn_url, update_mirror_latency
+    from config import prefs, get_mirrors, get_active_backend, BACKENDS
     from scraper import LibgenScraper, LibgenBook, get_scraper
 
 # --- END IMPORTS ---
