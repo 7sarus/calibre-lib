@@ -1710,7 +1710,10 @@ class BookracyProvider:
                 raw_books = self.scraper._parse_bookracy_json(data)
         except Exception as e:
             if progress_callback:
-                progress_callback(f"Bookracy error: {e}")
+                try:
+                    progress_callback(1, 1, self.MIRROR_URL, 0, max_results)
+                except Exception:
+                    pass
             return []
 
         filtered = self.scraper._filter_and_rank(raw_books, preferred_language, preferred_format, filter_mode, query)
@@ -1786,12 +1789,14 @@ class DualEngineProvider:
         self.libgen = LibgenScraper(mirrors=mirrors, timeout=timeout)
         self.bookracy = BookracyProvider(timeout=timeout)
 
-    def search(self, query, **kwargs):
         results = self.libgen.search(query, **kwargs)
         if not results:
-            cb = kwargs.get("log_callback") or kwargs.get("progress_callback")
-            if cb:
-                cb("LibGen returned 0 results. Fallback searching Bookracy...")
+            log_cb = kwargs.get("log_callback")
+            if log_cb:
+                try:
+                    log_cb("LibGen returned 0 results. Fallback searching Bookracy...")
+                except Exception:
+                    pass
             results = self.bookracy.search(query, **kwargs)
         return results
 
