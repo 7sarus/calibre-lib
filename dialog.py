@@ -141,6 +141,7 @@ try:
         clear_pending_searches,
         get_active_backend,
         set_active_backend,
+        BACKENDS,
     )
     from calibre_plugins.libgen_store.scraper import LibgenScraper, LibgenBook, get_scraper
 except (ImportError, ModuleNotFoundError):
@@ -173,6 +174,7 @@ except (ImportError, ModuleNotFoundError):
         clear_pending_searches,
         get_active_backend,
         set_active_backend,
+        BACKENDS,
     )
     from scraper import LibgenScraper, LibgenBook, get_scraper
 
