@@ -972,7 +972,7 @@ class LibgenDialog(QDialog):
         self.resize(saved_w, saved_h)
 
         self.search_results = []
-        self.queue_items = []
+        self.queue_items = []  # To be managed by QueueManager
         self.mirror_health = {}
         self.session_cdn_speeds = {}
         self.download_worker = None
@@ -2633,7 +2633,7 @@ class LibgenDialog(QDialog):
         prefs["saved_queue_items"] = saved
 
     def load_queue(self):
-        self.queue_items = []
+        self.queue_items = []  # To be managed by QueueManager
         saved = prefs.get("saved_queue_items", [])
         if not isinstance(saved, list):
             return
