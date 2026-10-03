@@ -9,6 +9,12 @@ mirror selection/health checks, and queue download manager directly inside Calib
 import os
 import re
 import time
+
+try:
+    from calibre_plugins.libgen_store.queue_manager import QueueManager
+except ImportError:
+    from queue_manager import QueueManager
+
 import threading
 import collections
 from collections import OrderedDict
