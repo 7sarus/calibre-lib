@@ -991,15 +991,17 @@ class QueueProgressDelegate(QStyledItemDelegate):
                 opts.text = status
                 opts.textVisible = True
                 opts.progress = 0
-            elif status == "Downloading":
+            elif status and ("downloaded" in status.lower() or "added" in status.lower()):
+                opts.text = "100%"
+                opts.textVisible = True
+                opts.progress = 100
+            elif status and ("failed" in status.lower() or "error" in status.lower() or "stopped" in status.lower()):
+                opts.text = status
+                opts.textVisible = True
+                opts.progress = 0
+            else:
                 opts.text = custom_label if custom_label else f"{opts.progress}%"
                 opts.textVisible = True
-            else:
-                # Finished / Failed / Stopped
-                opts.text = status if status else f"{opts.progress}%"
-                opts.textVisible = True
-                if "Failed" in opts.text:
-                    opts.progress = 0
 
             QApplication.style().drawControl(QStyle.ControlElement.CE_ProgressBar, opts, painter)
         else:
@@ -1179,6 +1181,7 @@ class LibgenDialog(QDialog):
         if fmt_idx >= 0:
             self.format_combo.setCurrentIndex(fmt_idx)
         self.format_combo.currentTextChanged.connect(self.save_all_field_preferences)
+        self.format_combo.currentTextChanged.connect(lambda _: self.filter_results_table())
         adv_row1.addWidget(self.format_combo)
 
         adv_row1.addWidget(QLabel("Lang:"))
@@ -2491,6 +2494,19 @@ class LibgenDialog(QDialog):
             self.results_table.setItem(row, 4, QTableWidgetItem(book.extension))
             self.results_table.setItem(row, 5, SizeTableWidgetItem(book.size))
         self.results_table.setSortingEnabled(True)
+        self.filter_results_table()
+
+    def filter_results_table(self):
+        if not hasattr(self, "results_table") or not hasattr(self, "format_combo"):
+            return
+        selected_fmt = self.format_combo.currentText().strip().upper()
+        for row in range(self.results_table.rowCount()):
+            if selected_fmt == "ANY" or not selected_fmt:
+                self.results_table.setRowHidden(row, False)
+            else:
+                item = self.results_table.item(row, 4)
+                row_fmt = item.text().strip().upper() if item else ""
+                self.results_table.setRowHidden(row, row_fmt != selected_fmt)
 
     def select_all_results(self):
         self.results_table.selectAll()
@@ -2796,7 +2812,7 @@ class LibgenDialog(QDialog):
             self._filter_timer.start()
 
     def apply_queue_filter(self):
-        if not hasattr(self, "queue_table") or not hasattr(self, "queue_items"):
+        if not hasattr(self, "queue_table") or not hasattr(self, "queue_manager"):
             return
 
         queued_cnt = 0
@@ -2807,18 +2823,21 @@ class LibgenDialog(QDialog):
         for row, q in enumerate(self.queue_manager):
             status = str(q.get("status", "")).lower()
             is_downloaded = "downloaded" in status or "added" in status
-            is_queued = "queued" in status and not is_downloaded
+            is_failed = (
+                "failed" in status
+                or "error" in status
+                or "skipped" in status
+                or "stopped" in status
+            ) and not is_downloaded
             is_dl = (
                 "downloading" in status
                 or "resolving" in status
                 or "streaming" in status
                 or "piece-together" in status
-            ) and not is_downloaded
-            is_failed = (
-                "failed" in status
-                or "error" in status
-                or "skipped" in status
-            ) and not is_downloaded
+                or "multi-segment" in status
+                or "segment" in status
+            ) and not is_downloaded and not is_failed
+            is_queued = not is_downloaded and not is_failed and not is_dl
 
             if is_queued:
                 queued_cnt += 1
@@ -2840,7 +2859,8 @@ class LibgenDialog(QDialog):
             else:
                 hide = False
 
-            self.queue_table.setRowHidden(row, hide)
+            if row < self.queue_table.rowCount():
+                self.queue_table.setRowHidden(row, hide)
 
         if hasattr(self, "queue_filter_btns"):
             if "Queued" in self.queue_filter_btns:

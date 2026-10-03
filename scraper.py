@@ -224,11 +224,23 @@ class LibgenScraper:
                 return True
             return any(l in (b.language or "").lower() for l in pref_langs)
 
+        pref_fmt = (preferred_format or "").strip().upper()
+        has_format_filter = bool(pref_fmt and pref_fmt != "ANY")
+
+        def book_matches_fmt(b):
+            if not has_format_filter:
+                return True
+            return (getattr(b, "extension", "") or "").strip().upper() == pref_fmt
+
+        def book_matches_filters(b):
+            return book_matches_lang(b) and book_matches_fmt(b)
+
+        has_any_filter = has_lang_filter or has_format_filter
+
         # Fetch enough for filtering without forcing every normal search to parse 100+ rows.
-        has_format_filter = bool(preferred_format and preferred_format != "Any")
         if search_field == "i":
             fetch_count = max(max_results * 2, 5)
-        elif has_lang_filter or has_format_filter:
+        elif has_any_filter:
             fetch_count = min(100, max(max_results * 8, 40))
         else:
             fetch_count = min(60, max(max_results * 4, 20))
@@ -339,22 +351,22 @@ class LibgenScraper:
                             filter_mode=filter_mode,
                             query=query,
                         )
-                        matching_lang_books = [b for b in ranked_current if book_matches_lang(b)]
+                        matching_filter_books = [b for b in ranked_current if book_matches_filters(b)]
                         last_ranked_books = ranked_current
-                        last_matching_books = matching_lang_books
-                        current_match_count = len(matching_lang_books) if has_lang_filter else len(ranked_current)
+                        last_matching_books = matching_filter_books
+                        current_match_count = len(matching_filter_books) if has_any_filter else len(ranked_current)
                         _notify_progress(mirror, min(current_match_count, max_results))
                         if partial_results_callback:
-                            preview_books = matching_lang_books if has_lang_filter else ranked_current
+                            preview_books = matching_filter_books if has_any_filter else ranked_current
                             try:
                                 partial_results_callback(preview_books[:max_results], mirror)
                             except Exception:
                                 pass
 
-                        # Return immediately when target number of language-matching books is found!
+                        # Return immediately when target number of filter-matching books is found!
                         if current_match_count >= max_results:
                             found_event.set()
-                            books = matching_lang_books[:max_results] if has_lang_filter else ranked_current[:max_results]
+                            books = matching_filter_books[:max_results] if has_any_filter else ranked_current[:max_results]
                             break
                     else:
                         # Mirror returned nothing — no new books, skip redundant recompute
@@ -371,9 +383,9 @@ class LibgenScraper:
                 pool.shutdown(wait=False)
 
         if not books and collected_books:
-            if has_lang_filter and last_matching_books:
+            if has_any_filter and last_matching_books:
                 books = last_matching_books[:max_results]
-            else:
+            elif filter_mode != "Strict":
                 books = last_ranked_books[:max_results]
 
         # If targeted field query (e.g. Series 's', Title 't') returned 0 language matches, cascade to All Fields
@@ -632,30 +644,26 @@ class LibgenScraper:
             return any(l in book_lang for l in pref_langs)
 
         pref_fmt = (preferred_format or "").strip().upper()
+        has_fmt = bool(pref_fmt and pref_fmt != "ANY")
+
+        def matches_fmt(book):
+            if not has_fmt:
+                return True
+            return (getattr(book, "extension", "") or "").strip().upper() == pref_fmt
 
         if filter_mode == "Strict":
-            strict_list = []
-            for b in books:
-                if not matches_language(b):
-                    continue
-                if pref_fmt and pref_fmt != "ANY":
-                    if b.extension != pref_fmt:
-                        continue
-                strict_list.append(b)
-            if strict_list:
-                return strict_list
-            # If strict filter eliminated all candidates, fall through to Prioritize ranking
+            strict_list = [b for b in books if matches_language(b) and matches_fmt(b)]
+            return strict_list
 
-        # Prioritize Mode: score items by language match, format match, and query relevance
+        # Prioritize Mode: score items by format match, language match, and query relevance
         query_words = [w.lower() for w in _RE_WORD.findall(query or "") if len(w) > 2]
 
         def get_score(book):
             score = 0
+            if has_fmt and matches_fmt(book):
+                score += 2000
             if has_lang_filter and matches_language(book):
                 score += 1000
-            if pref_fmt and pref_fmt != "ANY":
-                if book.extension == pref_fmt:
-                    score += 100
             # Query relevance boost
             title_lower = (book.title or "").lower()
             author_lower = (book.author or "").lower()
