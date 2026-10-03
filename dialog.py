@@ -966,6 +966,45 @@ class ReviewImportDialog(QDialog):
         super().reject()
 
 
+
+from qt.core import QStyledItemDelegate, QStyleOptionProgressBar, QStyle, QApplication, QPalette
+
+class QueueProgressDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        if index.column() == 6:  # Progress column
+            progress = index.data(Qt.ItemDataRole.UserRole)
+            status = index.data(Qt.ItemDataRole.UserRole + 1)
+            custom_label = index.data(Qt.ItemDataRole.UserRole + 2)
+
+            if progress is None:
+                super().paint(painter, option, index)
+                return
+
+            opts = QStyleOptionProgressBar()
+            opts.rect = option.rect
+            opts.minimum = 0
+            opts.maximum = 100
+            opts.progress = int(progress)
+            
+            # Determine text to display
+            if status in ("Queued", "Queued (Bookracy)"):
+                opts.text = status
+                opts.textVisible = True
+                opts.progress = 0
+            elif status == "Downloading":
+                opts.text = custom_label if custom_label else f"{opts.progress}%"
+                opts.textVisible = True
+            else:
+                # Finished / Failed / Stopped
+                opts.text = status if status else f"{opts.progress}%"
+                opts.textVisible = True
+                if "Failed" in opts.text:
+                    opts.progress = 0
+
+            QApplication.style().drawControl(QStyle.ControlElement.CE_ProgressBar, opts, painter)
+        else:
+            super().paint(painter, option, index)
+
 class LibgenDialog(QDialog):
     def __init__(self, gui, initial_query=None, selected_books=None, parent=None):
         super().__init__(parent or gui)
@@ -1415,6 +1454,7 @@ class LibgenDialog(QDialog):
         self.queue_table.setHorizontalHeaderLabels([
             "Title", "Author", "Format", "Size", "Status", "Speed", "Progress"
         ])
+        self.queue_table.setItemDelegateForColumn(6, QueueProgressDelegate(self.queue_table))
         self.queue_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         self.queue_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
         self.queue_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
@@ -3267,7 +3307,9 @@ class LibgenDialog(QDialog):
             n_conc = int(prefs.get("concurrent_downloads", 1))
 
         self.download_worker = BulkDownloadWorker(
+            
             self.queue_manager,
+            target_indices=self.session_target_indices,
             auto_retry=do_auto_retry,
             fast_mode=do_fast_mode,
             download_dir=download_dir,
@@ -3400,6 +3442,9 @@ class LibgenDialog(QDialog):
 
             if idx < len(self.queue_manager):
                 self.queue_manager[idx]["progress"] = percent
+                self.queue_manager[idx]["speed"] = speed_kb
+                speed_str = f"{speed_kb/1024:.1f} MB/s" if speed_kb >= 1024 else f"{speed_kb:.0f} KB/s"
+                self.queue_table.setItem(idx, 5, QTableWidgetItem(speed_str + eta_str))
                 self._set_queue_item_progress(
                     idx,
                     percent,
