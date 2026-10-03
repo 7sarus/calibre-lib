@@ -972,7 +972,9 @@ class LibgenDialog(QDialog):
         self.resize(saved_w, saved_h)
 
         self.search_results = []
-        self.queue_items = []  # To be managed by QueueManager
+        self.queue_manager = QueueManager()
+        self.queue_manager.queue_updated.connect(self.update_queue_table)
+        self.queue_manager.clear()
         self.mirror_health = {}
         self.session_cdn_speeds = {}
         self.download_worker = None
@@ -1976,8 +1978,8 @@ class LibgenDialog(QDialog):
             rows = sorted([item.row() for item in self.queue_table.selectedItems()])
             if rows:
                 row = rows[0]
-                if row < len(self.queue_items):
-                    book = self.queue_items[row]["book"]
+                if row < len(self.queue_manager):
+                    book = self.queue_manager[row]["book"]
         
         if book and getattr(book, "detail_url", None):
             cache_key = book.detail_url or book.title
@@ -2057,8 +2059,8 @@ class LibgenDialog(QDialog):
                 curr_book = self.search_results[rows[0]]
         elif idx == 1:
             rows = sorted([item.row() for item in self.queue_table.selectedItems()])
-            if rows and rows[0] < len(self.queue_items):
-                curr_book = self.queue_items[rows[0]]["book"]
+            if rows and rows[0] < len(self.queue_manager):
+                curr_book = self.queue_manager[rows[0]]["book"]
 
         curr_url = getattr(curr_book, "detail_url", "")
         if curr_url == detail_url or not curr_url:
@@ -2500,15 +2502,15 @@ class LibgenDialog(QDialog):
             QMessageBox.warning(self, "Download in Progress", "Please wait or stop the current download before modifying the queue.")
             return
 
-        if not self.queue_items:
+        if not self.queue_manager:
             QMessageBox.information(self, "Empty Queue", "Download queue is currently empty.")
             return
 
-        initial_cnt = len(self.queue_items)
+        initial_cnt = len(self.queue_manager)
         unique_queue = []
         seen_keys = set()
 
-        for q in self.queue_items:
+        for q in self.queue_manager:
             book = q.get("book")
             if not book:
                 continue
@@ -2527,8 +2529,7 @@ class LibgenDialog(QDialog):
                 unique_queue.append(q)
 
         removed_cnt = initial_cnt - len(unique_queue)
-        self.queue_items = unique_queue
-        self.update_queue_table()
+        self.queue_manager.set_items(unique_queue)
 
         msg = f"✓ Removed {removed_cnt} duplicate item(s) from Queue. ({len(unique_queue)} remaining)" if removed_cnt > 0 else "No duplicates found in download queue."
         self.status_label.setText(msg)
@@ -2590,8 +2591,8 @@ class LibgenDialog(QDialog):
             if r < len(self.search_results):
                 book = self.search_results[r]
                 # Avoid duplicates in queue
-                if not any(q["book"].detail_url == book.detail_url for q in self.queue_items):
-                    self.queue_items.append({
+                if not any(q["book"].detail_url == book.detail_url for q in self.queue_manager):
+                    self.queue_manager.append({
                         "book": book,
                         "status": "Queued",
                     })
@@ -2620,7 +2621,7 @@ class LibgenDialog(QDialog):
 
     def save_queue(self):
         saved = []
-        for q in self.queue_items:
+        for q in self.queue_manager:
             bk = q.get("book")
             if bk:
                 saved.append({
@@ -2633,7 +2634,7 @@ class LibgenDialog(QDialog):
         prefs["saved_queue_items"] = saved
 
     def load_queue(self):
-        self.queue_items = []  # To be managed by QueueManager
+        self.queue_manager.clear()
         saved = prefs.get("saved_queue_items", [])
         if not isinstance(saved, list):
             return
@@ -2670,9 +2671,7 @@ class LibgenDialog(QDialog):
             })
 
         valid_items.reverse()
-        self.queue_items = valid_items
-        if self.queue_items:
-            self.update_queue_table()
+        self.queue_manager.set_items(valid_items)
 
     def _set_queue_item_progress(self, row, percent, status_text=None, custom_label=None):
         if row >= self.queue_table.rowCount():
@@ -2700,8 +2699,8 @@ class LibgenDialog(QDialog):
     def update_queue_table(self):
         self.queue_table.setUpdatesEnabled(False)
         try:
-            self.queue_table.setRowCount(len(self.queue_items))
-            for row, q in enumerate(self.queue_items):
+            self.queue_table.setRowCount(len(self.queue_manager))
+            for row, q in enumerate(self.queue_manager):
                 book = q["book"]
                 self.queue_table.setItem(row, 0, QTableWidgetItem(book.title))
                 self.queue_table.setItem(row, 1, QTableWidgetItem(book.author))
@@ -2720,10 +2719,10 @@ class LibgenDialog(QDialog):
                 self._set_queue_item_progress(row, pct, status_text)
     
             remaining = sum(
-                1 for q in self.queue_items
+                1 for q in self.queue_manager
                 if q.get("status") not in ("✓ Added to Library", "Downloaded", "✓ Downloaded (Pending Review)")
             )
-            total = len(self.queue_items)
+            total = len(self.queue_manager)
             if 0 < remaining < total:
                 self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Downloads ({remaining} left)")
             else:
@@ -2757,7 +2756,7 @@ class LibgenDialog(QDialog):
         downloaded_cnt = 0
         failed_cnt = 0
 
-        for row, q in enumerate(self.queue_items):
+        for row, q in enumerate(self.queue_manager):
             status = str(q.get("status", "")).lower()
             is_downloaded = "downloaded" in status or "added" in status
             is_queued = "queued" in status and not is_downloaded
@@ -2809,10 +2808,9 @@ class LibgenDialog(QDialog):
         if hasattr(self, 'download_worker') and self.download_worker and self.download_worker.isRunning():
             QMessageBox.warning(self, "Download in Progress", "Please wait or stop the current download before modifying the queue.")
             return
-        self.queue_items = [
-            q for q in self.queue_items
+        self.queue_manager.set_items([q for q in self.queue_manager
             if not ("downloaded" in str(q.get("status", "")).lower() or "added" in str(q.get("status", "")).lower())
-        ]
+        ])
         self.update_queue_table()
 
     def remove_from_queue(self):
@@ -2821,14 +2819,14 @@ class LibgenDialog(QDialog):
             return
         selected_rows = sorted(set(idx.row() for idx in self.queue_table.selectedIndexes()), reverse=True)
         for r in selected_rows:
-            del self.queue_items[r]
+            del self.queue_manager[r]
         self.update_queue_table()
 
     def clear_queue(self):
         if hasattr(self, 'download_worker') and self.download_worker and self.download_worker.isRunning():
             QMessageBox.warning(self, "Download in Progress", "Please wait or stop the current download before modifying the queue.")
             return
-        self.queue_items.clear()
+        self.queue_manager.clear()
         self.session_target_indices = []
         if hasattr(self, "bulk_progress_bar"):
             self.bulk_progress_bar.setVisible(False)
@@ -3116,7 +3114,7 @@ class LibgenDialog(QDialog):
     def retry_failed_downloads(self):
         """Finds all failed books in the queue and restarts bulk download with multi-mirror failover."""
         failed_indices = []
-        for idx, item in enumerate(self.queue_items):
+        for idx, item in enumerate(self.queue_manager):
             status = item.get("status", "").lower()
             if "fail" in status or status == "failed" or "stop" in status:
                 item["status"] = "Queued"
@@ -3142,14 +3140,14 @@ class LibgenDialog(QDialog):
     def retry_failed_with_bookracy(self):
         """Finds all failed or pending books in the queue and restarts download directly via Bookracy."""
         target_indices = []
-        for idx, item in enumerate(self.queue_items):
+        for idx, item in enumerate(self.queue_manager):
             status = item.get("status", "").lower()
             if "fail" in status or status == "failed" or "stop" in status:
                 target_indices.append(idx)
 
         # If no explicit failures found, check for any uncompleted books
         if not target_indices:
-            for idx, item in enumerate(self.queue_items):
+            for idx, item in enumerate(self.queue_manager):
                 status = item.get("status", "").lower()
                 if "downloaded" not in status and "added" not in status:
                     target_indices.append(idx)
@@ -3159,7 +3157,7 @@ class LibgenDialog(QDialog):
             return
 
         for idx in target_indices:
-            item = self.queue_items[idx]
+            item = self.queue_manager[idx]
             item["force_bookracy"] = True
             item["status"] = "Queued (Bookracy)"
             item["progress"] = 0
@@ -3194,7 +3192,7 @@ class LibgenDialog(QDialog):
             self.session_target_indices = list(target_indices)
         else:
             self.session_target_indices = [
-                idx for idx, q in enumerate(self.queue_items) 
+                idx for idx, q in enumerate(self.queue_manager) 
                 if q.get("status") not in ("✓ Added to Library", "Downloaded", "✓ Downloaded (Pending Review)")
             ]
 
@@ -3261,7 +3259,7 @@ class LibgenDialog(QDialog):
             n_conc = int(prefs.get("concurrent_downloads", 1))
 
         self.download_worker = BulkDownloadWorker(
-            self.queue_items,
+            self.queue_manager,
             auto_retry=do_auto_retry,
             fast_mode=do_fast_mode,
             download_dir=download_dir,
@@ -3324,8 +3322,8 @@ class LibgenDialog(QDialog):
         else:
             status_text = f"🌊 Streaming ({host})..."
 
-        if idx < len(self.queue_items):
-            self.queue_items[idx]["status"] = status_text
+        if idx < len(self.queue_manager):
+            self.queue_manager[idx]["status"] = status_text
             self.queue_table.setItem(idx, 4, QTableWidgetItem(status_text))
             self._schedule_filter()
         
@@ -3334,13 +3332,13 @@ class LibgenDialog(QDialog):
             self.side_mirror_status.appendPlainText(f"{stage_icon} [CDN] {host}")
 
     def on_item_status(self, idx, status_text):
-        if idx < len(self.queue_items):
+        if idx < len(self.queue_manager):
             dest_path = ""
             if "|" in status_text:
                 status_text, dest_path = status_text.split("|", 1)
-                self.queue_items[idx]["dest_file"] = dest_path
+                self.queue_manager[idx]["dest_file"] = dest_path
 
-            self.queue_items[idx]["status"] = status_text
+            self.queue_manager[idx]["status"] = status_text
             status_item = QTableWidgetItem(status_text)
             st_lower = status_text.lower()
             if "failed" in st_lower or "error" in st_lower or "skipped" in st_lower:
@@ -3348,26 +3346,26 @@ class LibgenDialog(QDialog):
                 self.toggle_activity_log(force_open=True)
             elif "downloaded" in st_lower or "added" in st_lower:
                 status_item.setForeground(QColor("#22c55e"))
-                self.queue_items[idx]["download_timestamp"] = time.time()
-                bk = self.queue_items[idx].get("book")
-                dest = dest_path or self.queue_items[idx].get("dest_file", "")
+                self.queue_manager[idx]["download_timestamp"] = time.time()
+                bk = self.queue_manager[idx].get("book")
+                dest = dest_path or self.queue_manager[idx].get("dest_file", "")
                 if bk:
                     append_download_history(bk, dest)
             self.queue_table.setItem(idx, 4, status_item)
-            self._set_queue_item_progress(idx, self.queue_items[idx].get("progress", 0), status_text)
+            self._set_queue_item_progress(idx, self.queue_manager[idx].get("progress", 0), status_text)
             self._schedule_filter()
             
             # Active session download counter
             if hasattr(self, "session_target_indices") and self.session_target_indices:
                 completed = sum(
                     1 for i in self.session_target_indices 
-                    if i < len(self.queue_items) and self.queue_items[i].get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"]
+                    if i < len(self.queue_manager) and self.queue_manager[i].get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"]
                 )
                 self.session_completed = completed
                 total = getattr(self, "session_total", len(self.session_target_indices))
                 remaining = max(0, total - completed)
                 self.status_label.setText(f"{completed}/{total} downloaded ({remaining} remaining)")
-                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_items)})")
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Queue ({remaining} left)" if remaining > 0 else f"Queue ({len(self.queue_manager)})")
                 if hasattr(self, "bulk_progress_bar") and total > 0:
                     self.bulk_progress_bar.setVisible(True)
                     self.bulk_progress_bar.setMaximum(total)
@@ -3375,10 +3373,10 @@ class LibgenDialog(QDialog):
                     pct_tot = int((completed / total) * 100)
                     self.bulk_progress_bar.setFormat(f"Bulk Download: {completed}/{total} books ({pct_tot}%)")
             else:
-                downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
-                remaining = max(0, len(self.queue_items) - downloaded)
-                self.status_label.setText(f"{downloaded}/{len(self.queue_items)} downloaded ({remaining} remaining)")
-                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Downloads ({remaining} left)" if remaining > 0 else f"Downloads ({len(self.queue_items)})")
+                downloaded = sum(1 for q in self.queue_manager if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
+                remaining = max(0, len(self.queue_manager) - downloaded)
+                self.status_label.setText(f"{downloaded}/{len(self.queue_manager)} downloaded ({remaining} remaining)")
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Downloads ({remaining} left)" if remaining > 0 else f"Downloads ({len(self.queue_manager)})")
 
     def on_item_progress(self, idx, bytes_read, total_bytes, speed_kb):
         if total_bytes > 0:
@@ -3392,12 +3390,12 @@ class LibgenDialog(QDialog):
             # Verbose progress label for the table cell
             cell_label = f"{percent}% ({read_mb:.1f}/{tot_mb:.1f}MB)"
 
-            if idx < len(self.queue_items):
-                self.queue_items[idx]["progress"] = percent
+            if idx < len(self.queue_manager):
+                self.queue_manager[idx]["progress"] = percent
                 self._set_queue_item_progress(
                     idx,
                     percent,
-                    self.queue_items[idx].get("status", "Downloading"),
+                    self.queue_manager[idx].get("status", "Downloading"),
                     custom_label=cell_label,
                 )
                 speed_icon = "⚡" if speed_kb >= 100 else ("🚀" if speed_kb >= 50 else "📥")
@@ -3406,13 +3404,13 @@ class LibgenDialog(QDialog):
             if hasattr(self, "session_target_indices") and self.session_target_indices:
                 completed = sum(
                     1 for i in self.session_target_indices 
-                    if i < len(self.queue_items) and self.queue_items[i].get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"]
+                    if i < len(self.queue_manager) and self.queue_manager[i].get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"]
                 )
                 self.session_completed = completed
                 total = getattr(self, "session_total", len(self.session_target_indices))
                 remaining = max(0, total - completed)
                 self.status_label.setText(f"📥 {completed}/{total} downloaded ({remaining} remaining) • {read_mb:.1f}/{tot_mb:.1f} MB @ {speed_kb:.1f} KB/s{eta_str}")
-                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Downloads ({remaining} left)" if remaining > 0 else f"Downloads ({len(self.queue_items)})")
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Downloads ({remaining} left)" if remaining > 0 else f"Downloads ({len(self.queue_manager)})")
                 if hasattr(self, "bulk_progress_bar") and total > 0:
                     self.bulk_progress_bar.setVisible(True)
                     self.bulk_progress_bar.setMaximum(total)
@@ -3420,11 +3418,11 @@ class LibgenDialog(QDialog):
                     pct_tot = int((completed / total) * 100)
                     self.bulk_progress_bar.setFormat(f"📦 Bulk: {completed}/{total} ({pct_tot}%) • ⚡ {speed_kb:.1f} KB/s ({read_mb:.1f}/{tot_mb:.1f} MB){eta_str}")
             else:
-                downloaded = sum(1 for q in self.queue_items if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
-                remaining = max(0, len(self.queue_items) - downloaded)
-                self.status_label.setText(f"📥 {downloaded}/{len(self.queue_items)} downloaded ({remaining} remaining) • {read_mb:.1f}/{tot_mb:.1f} MB @ {speed_kb:.1f} KB/s{eta_str}")
-                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Downloads ({remaining} left)" if remaining > 0 else f"Downloads ({len(self.queue_items)})")
-                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Downloads ({remaining} left)" if remaining > 0 else f"Downloads ({len(self.queue_items)})")
+                downloaded = sum(1 for q in self.queue_manager if q.get("status") in ["Downloaded", "✓ Downloaded (Pending Review)", "✓ Added to Library"])
+                remaining = max(0, len(self.queue_manager) - downloaded)
+                self.status_label.setText(f"📥 {downloaded}/{len(self.queue_manager)} downloaded ({remaining} remaining) • {read_mb:.1f}/{tot_mb:.1f} MB @ {speed_kb:.1f} KB/s{eta_str}")
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Downloads ({remaining} left)" if remaining > 0 else f"Downloads ({len(self.queue_manager)})")
+                self.set_tab_text_for_widget(getattr(self, "tab_queue", None), f"Downloads ({remaining} left)" if remaining > 0 else f"Downloads ({len(self.queue_manager)})")
 
     def import_books_to_library(self, file_paths):
         """Batch import downloaded books into Calibre library."""
@@ -3592,7 +3590,7 @@ class LibgenDialog(QDialog):
             download_dir = prefs.get("download_directory", self.get_download_directory())
             for it in downloaded_items:
                 idx = it["index"]
-                self.queue_items[idx]["status"] = "Downloaded"
+                self.queue_manager[idx]["status"] = "Downloaded"
                 self.queue_table.setItem(idx, 4, QTableWidgetItem("Downloaded"))
             self.status_label.setText(f"Saved {len(downloaded_items)} book(s) to {download_dir}.")
             QMessageBox.information(
@@ -3615,10 +3613,10 @@ class LibgenDialog(QDialog):
             for it in downloaded_items:
                 idx = it["index"]
                 if idx in approved_indices:
-                    self.queue_items[idx]["status"] = "✓ Added to Library"
+                    self.queue_manager[idx]["status"] = "✓ Added to Library"
                     self.queue_table.setItem(idx, 4, QTableWidgetItem("✓ Added to Library"))
                 else:
-                    self.queue_items[idx]["status"] = "Downloaded (Not Imported)"
+                    self.queue_manager[idx]["status"] = "Downloaded (Not Imported)"
                     self.queue_table.setItem(idx, 4, QTableWidgetItem("Downloaded (Not Imported)"))
 
             self.status_label.setText(f"Successfully added {len(approved)} book(s) to Calibre library.")
@@ -3630,7 +3628,7 @@ class LibgenDialog(QDialog):
         else:
             for it in downloaded_items:
                 idx = it["index"]
-                self.queue_items[idx]["status"] = "Downloaded (Not Imported)"
+                self.queue_manager[idx]["status"] = "Downloaded (Not Imported)"
                 self.queue_table.setItem(idx, 4, QTableWidgetItem("Downloaded (Not Imported)"))
             self.status_label.setText("Import skipped. Downloaded books held in queue.")
 
@@ -3649,7 +3647,7 @@ class LibgenDialog(QDialog):
             QMessageBox.StandardButton.Yes,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            for idx, itm in enumerate(self.queue_items):
+            for idx, itm in enumerate(self.queue_manager):
                 st = itm.get("status", "").lower()
                 if "fail" in st or "stop" in st:
                     itm["status"] = "Queued (Ready to retry)"
