@@ -427,27 +427,36 @@ class LibgenScraper:
             rows = table.find_all("tr")
             for r in rows:
                 cells = r.find_all("td")
-                if len(cells) < 8:
-                    continue
-
-                # Title column may have multiple child nodes / links
-                title_node = cells[0]
-                for tag in title_node.find_all("nobr"):
-                    tag.decompose()
-                title = title_node.get_text(" ", strip=True)
-
-                author = cells[1].get_text(" ", strip=True)
-                publisher = cells[2].get_text(" ", strip=True)
-                year = cells[3].get_text(strip=True)
-                language = cells[4].get_text(strip=True)
-                pages = cells[5].get_text(strip=True)
-                size = cells[6].get_text(strip=True)
-                extension = cells[7].get_text(strip=True).upper()
-
-                # Cell 8 contains mirror links (e.g. ads.php or get.php)
+                author, publisher, year, language, pages, size, extension = "", "", "", "", "", "", ""
                 detail_url = ""
-                if len(cells) > 8:
-                    first_link = cells[8].find("a")
+                
+                # Format 1A: Comic/Magazine collapsed row (colspan=5)
+                if len(cells) == 5 and cells[0].has_attr("colspan"):
+                    title_node = cells[0]
+                    for tag in title_node.find_all("nobr"):
+                        tag.decompose()
+                    title = title_node.get_text(" ", strip=True)
+                    pages = cells[1].get_text(strip=True)
+                    size = cells[2].get_text(strip=True)
+                    extension = cells[3].get_text(strip=True).upper()
+                    if len(cells) > 4:
+                        first_link = cells[4].find("a")
+                elif len(cells) >= 8:
+                    title_node = cells[0]
+                    for tag in title_node.find_all("nobr"):
+                        tag.decompose()
+                    title = title_node.get_text(" ", strip=True)
+                    author = cells[1].get_text(" ", strip=True)
+                    publisher = cells[2].get_text(" ", strip=True)
+                    year = cells[3].get_text(strip=True)
+                    language = cells[4].get_text(strip=True)
+                    pages = cells[5].get_text(strip=True)
+                    size = cells[6].get_text(strip=True)
+                    extension = cells[7].get_text(strip=True).upper()
+                    if len(cells) > 8:
+                        first_link = cells[8].find("a")
+                else:
+                    continue
                     if first_link and first_link.get("href"):
                         detail_url = urljoin(mirror, first_link["href"])
 
