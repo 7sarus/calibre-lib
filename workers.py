@@ -15,11 +15,14 @@ except ImportError:
     pass
 
 try:
-    from calibre_plugins.libgen_store.config import prefs, get_mirrors, get_active_backend, BACKENDS
+    from calibre_plugins.libgen_store.config import prefs, get_mirrors, get_active_backend, BACKENDS, add_pending_search
     from calibre_plugins.libgen_store.scraper import LibgenScraper, LibgenBook, get_scraper
 except ImportError:
-    from config import prefs, get_mirrors, get_active_backend, BACKENDS
+    from config import prefs, get_mirrors, get_active_backend, BACKENDS, add_pending_search
     from scraper import LibgenScraper, LibgenBook, get_scraper
+
+def sanitize_filename(name):
+    return re.sub(r"[\\/*?:\"<>|]", "", name).strip()[:100]
 
 # --- END IMPORTS ---
 
