@@ -1,5 +1,9 @@
 # Inherited Antigravity Rules
 
+## Project Context
+
+**Read `llm.md` first**, before any other project task or code inspection. It holds the project overview, repo/branch state, module map, backend selection, safety boundaries, known debt, and handover checklist.
+
 This workspace inherits the machine-level Antigravity/Gemini rules from:
 
 - `/home/thomas/.gemini/config/rules/instruction-following.md`
