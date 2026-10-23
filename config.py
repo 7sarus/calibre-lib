@@ -29,8 +29,8 @@ from qt.core import (
 
 # Plugin Version definitions
 PLUGIN_VERSION = (1, 5, 0)
-_BASE_VERSION_STR = "v1.50b"
-_BUILD_COMMIT = "151"
+_BASE_VERSION_STR = "v1.50"
+_BUILD_COMMIT = "88"
 
 
 
@@ -70,7 +70,7 @@ DEFAULT_FALLBACK_MIRRORS = (
     "https://libgen.bz",
     "https://libgen.la",
 )
-_VALID_MIRROR_RE = re.compile(r"^https?://(?:(?:www\.)?libgen\.[a-z]{2,}|api\.bookracy\.com)(?::\d+)?/?$", re.IGNORECASE)
+_VALID_MIRROR_RE = re.compile(r"^https?://(?:www\.)?libgen\.[a-z]{2,}(?::\d+)?/?$", re.IGNORECASE)
 
 
 def normalize_mirror_url(url):
@@ -107,23 +107,6 @@ prefs.defaults["unique_results"] = True
 prefs.defaults["fast_mode"] = False
 prefs.defaults["concurrent_downloads"] = 1
 prefs.defaults["download_action"] = "Import to Calibre"
-prefs.defaults["active_backend"] = "libgen"
-prefs.defaults["bookracy_enabled"] = True
-prefs.defaults["bookracy_auto_retry_failed"] = True
-
-BACKENDS = {
-    "libgen": "LibGen (Classic)",
-    "bookracy": "Bookracy (api.bookracy.com)",
-    "dual": "Dual Engine (LibGen + Bookracy Failover)",
-}
-
-def get_active_backend():
-    b = prefs.get("active_backend", "libgen")
-    return b if b in BACKENDS else "libgen"
-
-def set_active_backend(backend_name):
-    if backend_name in BACKENDS:
-        prefs["active_backend"] = backend_name
 
 prefs.defaults["download_directory"] = os.path.join(os.path.expanduser("~"), "Downloads", "callib")
 prefs.defaults["save_search_history"] = False
@@ -142,13 +125,12 @@ prefs.defaults["hardcover_dialog_height"] = 460
 prefs.defaults["hardcover_books_table_header"] = ""
 prefs.defaults["review_dialog_width"] = 720
 prefs.defaults["review_dialog_height"] = 420
-prefs.defaults["review_dialog_splitter"] = ""
-prefs.defaults["table_column_widths"] = {}
-prefs.defaults["queue_column_widths"] = {}
-prefs.defaults["mirrors_column_widths"] = {}
-prefs.defaults["filter_drawer_expanded"] = True
-prefs.defaults["active_queue_subtab"] = 0
-prefs.defaults["log_drawer_expanded"] = True
+prefs.defaults["review_table_header"] = ""
+prefs.defaults["cover_panel_width"] = 200
+prefs.defaults["cover_panel_height"] = 300
+prefs.defaults["log_panel_height"] = 120
+prefs.defaults["dialog_width"] = 920
+prefs.defaults["dialog_height"] = 600
 
 SEARCH_FIELDS = {
     "All Fields": "",
@@ -169,38 +151,30 @@ CATEGORIES = {
     "Magazines": "m",
 }
 
-# Helper functions for preferences access
 def get_mirrors():
-    """Returns a list of mirror URLs combining primary, permanent, fallbacks, and custom mirrors."""
-    primary = normalize_mirror_url(prefs.get("primary_mirror", "https://libgen.li"))
-    raw_fallbacks = prefs.get("fallback_mirrors", "")
-    fallbacks = [normalize_mirror_url(m) for m in raw_fallbacks.split(",") if m.strip()]
+    """Returns an ordered list of unique mirrors, defaulting to lowest latency first."""
+    primary = normalize_mirror_url(prefs.get("primary_mirror", "https://libgen.li")) or "https://libgen.li"
+    fallback_str = prefs.get("fallback_mirrors", "")
+    fallbacks = [normalize_mirror_url(m) for m in fallback_str.split(",")]
+    custom = [normalize_mirror_url(m) for m in prefs.get("custom_mirrors", [])]
     cleaned_fallbacks = [m for m in fallbacks if m]
+    cleaned_custom = [m for m in custom if m]
 
-    custom_list = prefs.get("custom_mirrors", [])
-    cleaned_custom = [normalize_mirror_url(m) for m in custom_list if m.strip()]
-
-    backend = get_active_backend()
-    if backend == "bookracy":
-        return ["https://api.bookracy.com"]
+    if cleaned_fallbacks != [m.strip().rstrip("/") for m in fallback_str.split(",") if m.strip()]:
+        prefs["fallback_mirrors"] = ", ".join(cleaned_fallbacks)
+    if cleaned_custom != prefs.get("custom_mirrors", []):
+        prefs["custom_mirrors"] = cleaned_custom
 
     pool = []
     for m in [primary] + list(PERMANENT_MIRRORS) + cleaned_fallbacks + cleaned_custom:
-        if m and m != "https://api.bookracy.com" and m not in pool:
+        if m and m not in pool:
             pool.append(m)
-
-    if backend == "dual" and "https://api.bookracy.com" not in pool:
-        pool.append("https://api.bookracy.com")
 
     latencies = prefs.get("mirror_latencies", {})
     if not isinstance(latencies, dict):
         latencies = {}
 
-    last_succ = normalize_mirror_url(prefs.get("last_successful_mirror", ""))
-
     def latency_key(url):
-        if last_succ and url == last_succ:
-            return (-1, 0)
         # Lowest positive ms first. Untested mirrors (None / <=0) follow tested ones.
         ms = latencies.get(url)
         if ms is not None and isinstance(ms, (int, float)) and ms > 0:
@@ -680,21 +654,6 @@ class ConfigWidget(QWidget):
         super().__init__()
         self.layout = QVBoxLayout(self)
 
-        # Backend Engine Selection Group
-        backend_group = QGroupBox("Backend Engine Selection")
-        backend_layout = QFormLayout(backend_group)
-
-        self.backend_combo = QComboBox(self)
-        for code, name in BACKENDS.items():
-            self.backend_combo.addItem(name, code)
-        cur_bk = get_active_backend()
-        for i in range(self.backend_combo.count()):
-            if self.backend_combo.itemData(i) == cur_bk:
-                self.backend_combo.setCurrentIndex(i)
-                break
-        backend_layout.addRow("Active API Backend:", self.backend_combo)
-        self.layout.addWidget(backend_group)
-
         # Mirror Settings Group
         mirror_group = QGroupBox("Mirror Settings")
         mirror_layout = QFormLayout(mirror_group)
@@ -798,22 +757,7 @@ class ConfigWidget(QWidget):
         self.clear_history_btn.clicked.connect(self._confirm_clear_history)
         history_layout.addRow("", self.clear_history_btn)
 
-        # Bookracy Settings Group
-        bookracy_group = QGroupBox("Bookracy Provider & Fallback")
-        bookracy_layout = QFormLayout(bookracy_group)
-
-        self.bookracy_enabled_cb = QCheckBox("Enable Bookracy search and mirror pool", self)
-        self.bookracy_enabled_cb.setChecked(bool(prefs.get("bookracy_enabled", True)))
-        self.bookracy_enabled_cb.setToolTip("Enables searching https://bookracy.com alongside LibGen mirrors.")
-        bookracy_layout.addRow("Provider:", self.bookracy_enabled_cb)
-
-        self.bookracy_auto_retry_cb = QCheckBox("Automatically retry failed LibGen downloads via Bookracy", self)
-        self.bookracy_auto_retry_cb.setChecked(bool(prefs.get("bookracy_auto_retry_failed", True)))
-        self.bookracy_auto_retry_cb.setToolTip("When all LibGen mirrors fail to download a book, automatically queries Bookracy by MD5 and Title as a fallback source.")
-        bookracy_layout.addRow("Failover Retry:", self.bookracy_auto_retry_cb)
-
         self.layout.addWidget(filter_group)
-        self.layout.addWidget(bookracy_group)
         self.layout.addWidget(history_group)
 
         # Informational note
@@ -850,8 +794,3 @@ class ConfigWidget(QWidget):
         prefs["max_search_history"] = self.max_search_history_spin.value()
         prefs["max_download_history"] = self.max_download_history_spin.value()
         prefs["history_retention_days"] = self.retention_days_spin.value()
-        prefs["bookracy_enabled"] = self.bookracy_enabled_cb.isChecked()
-        prefs["bookracy_auto_retry_failed"] = self.bookracy_auto_retry_cb.isChecked()
-        chosen_bk = self.backend_combo.itemData(self.backend_combo.currentIndex())
-        if chosen_bk:
-            set_active_backend(chosen_bk)
