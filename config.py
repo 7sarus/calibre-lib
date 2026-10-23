@@ -30,7 +30,7 @@ from qt.core import (
 # Plugin Version definitions
 PLUGIN_VERSION = (1, 7, 0)
 _BASE_VERSION_STR = "v1.70b"
-_BUILD_COMMIT = "153"
+_BUILD_COMMIT = "155"
 
 
 
