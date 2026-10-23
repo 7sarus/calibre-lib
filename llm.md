@@ -116,13 +116,13 @@ Never collapse these to a single import — it breaks one of the two load paths.
 
 ---
 
-## 6. Feature Surface (keep in sync when changing)
+## 6. Feature Surface (kept minimal)
 
-- **Search**: field targeting (All/Title/Author/Series/Publisher/Year/ISBN), language + format filters (Prioritize/Strict), category partitions (`f`, `l`, `a`, `c`, `m`), bulk search queue with two-pass deferral, pending-search retry dropdown, optional local history.
-- **Queue**: segmented views (Queued / Downloading / Downloaded / Failed), auto-prune by retention days, persistent column widths, movable tabs, retry-failed, "Retry with Bookracy", live activity log drawer, ASCII cat status bar.
-- **Mirrors & Health**: latency + live bandwidth table, sort-by-speed, custom mirror add/remove, dead-mirror discard, fastest-CDN medal rankings at session end.
-- **Library integration**: context-menu author search (`new_api.field_for('authors')`), search-selected-records, Hardcover shelf/list import with ISBN matching and skip-if-in-library.
-- **Easter eggs**: click the version badge 3× to toggle download stats and cats.
+- **Search**: field targeting, language/format filters, category partitions, bulk queue with deferral, retry dropdown.
+- **Queue**: segmented views (Queued/Downloading/Downloaded/Failed), auto-prune, retry-failed, "Retry with Bookracy".
+- **Mirrors**: latency-sorted cycling, dead-mirror discard, fastest-CDN rankings.
+- **Library integration**: author search, Hardcover import with ISBN matching.
+- **Easter eggs**: version-badge click toggles stats/cats.
 
 ---
 
