@@ -13,7 +13,7 @@ $(PLUGIN_NAME): $(SOURCES)
 	@rm -f $(PLUGIN_NAME)
 	@sed -i 's/^_BUILD_COMMIT = .*/_BUILD_COMMIT = "$(COMMIT_COUNT)"/' config.py
 	@zip -q -r $(PLUGIN_NAME) $(SOURCES)
-	@echo "Successfully created $(PLUGIN_NAME) (v1.10b-$(COMMIT_COUNT))"
+	@echo "Successfully created $(PLUGIN_NAME) (v1.70b-$(COMMIT_COUNT))"
 
 install: build
 	@echo "Installing $(PLUGIN_NAME) into Calibre..."

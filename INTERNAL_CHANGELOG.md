@@ -1,10 +1,19 @@
 ---
 format: gemini-readable-change-log
 project: libgen-downloader
-updated: 2026-09-15
+updated: 2026-10-23
 ---
 
 # Internal Change Log
+
+## 2026-10-23
+
+- id: release-v1.70b
+  type: release
+  files: [config.py, __init__.py, CHANGELOG.md, README.md, Makefile]
+  summary: Release v1.70b with Bookracy backend integration, dual-stage failover, modular background worker and queue manager architecture, and clean release workflow.
+  why: User requested cleanup of previous intermediate drafts/tags and formal release of v1.70b marked as latest.
+  validation: make build packages cleanly with commit stamp; gh release validated.
 
 ## 2026-09-15
 

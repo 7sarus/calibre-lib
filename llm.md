@@ -16,7 +16,7 @@ A **Calibre User Interface Action plugin** (`calibre_plugins.libgen_store`) that
 
 - **Upstream repo**: `git@github.com:7sarus/calibre-lib.git` (origin + upstream both point here).
 - **License**: WTFPL. Adapted from [`obsfx/libgen-downloader`](https://github.com/obsfx/libgen-downloader).
-- **Status**: Beta. Active branch `beta`, 147 commits, version `v1.50b-147`.
+- **Status**: Beta. Active branch `beta`, version `v1.70b`.
 - **Runtime**: Calibre's **bundled Python 3** and Qt bindings only. Imports must use `qt.core` (Qt5/Qt6 shim), **never** bare `PyQt5`/`PyQt6`.
 - **Hard rule**: zero external dependencies. Only Calibre-bundled `bs4`, `calibre.browser`, `qt.core`, `lxml` (optional, auto-detected).
 
@@ -109,7 +109,7 @@ Never collapse these to a single import — it breaks one of the two load paths.
    - 512 KB chunk/reassembly buffers.
    - File concurrency default **1** (UI spinbox allows 1–4; higher splits bandwidth and invites rate limiting).
 4. **Sandbox before import.** Downloads land in a sandbox directory. Library ingestion only happens through the Import Review Modal (Import All / Import Selected / Discard). Never auto-import mid-stream.
-5. **Version stamping.** `config.py` holds `_BASE_VERSION_STR = "v1.50b"` and `_BUILD_COMMIT`. `make build` rewrites `_BUILD_COMMIT` with `git rev-list --count HEAD`. Beta version strings append the commit count (`v1.50b-147`).
+5. **Version stamping.** `config.py` holds `_BASE_VERSION_STR = "v1.70b"` and `_BUILD_COMMIT`. `make build` rewrites `_BUILD_COMMIT` with `git rev-list --count HEAD`. Beta version strings append the commit count (e.g. `v1.70b-155`).
 6. **Beta isolation.** Beta builds, tags, and releases stay on `beta`. Never push, tag, or release without explicit instruction.
 7. **No binaries in git.** `*.zip` and `releases/` are gitignored. Build artifacts are never committed.
 8. **Multi-mirror behaviour**: "Auto (Best Latency)" — mirrors sorted by lowest latency, then cycled sequentially on failure. Latency and fastest-CDN scores persist in prefs.

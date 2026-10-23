@@ -1,6 +1,6 @@
 # Changelog
 
-## [v1.50b] (Beta API Backend Edition)
+## [v1.70b] (Beta API Backend Edition)
 
 ### Highlights
 - **Bookracy Search Provider:** Added support for https://bookracy.com as an optional source queried concurrently with LibGen mirrors.
