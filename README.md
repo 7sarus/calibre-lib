@@ -146,7 +146,13 @@ Join our community for discussions, feature requests, mirror health updates, and
 
 ## 📦 Releases & Version History
 
-- **[v1.50 (Latest Release)](https://github.com/7sarus/calibre-lib/releases)**:
+- **[v1.70b (Latest Release)](https://github.com/7sarus/calibre-lib/releases)**:
+  - **Bookracy API Backend & Provider**: Secondary book provider querying Bookracy concurrently with LibGen mirrors.
+  - **Dual-Stage Failover Recovery**: Automatically recovers failed downloads with exact MD5 matching first, then Title + Author fallback.
+  - **"Retry with Bookracy" Queue Action**: Instant queue toolbar button and live fallback toggle for seamless retry workflows.
+  - **Isolated Provider Preferences**: Dedicated settings configuration to manage Bookracy credentials and behavior cleanly.
+  - **Refactored Modular Architecture**: Modular background workers and queue management for rock-solid stability.
+- **[v1.50](https://github.com/7sarus/calibre-lib/releases/tag/v1.50)**:
   - **Hardcover Reading Lists**: Sync personal reading lists and shelves ("Want to Read", "Currently Reading", custom lists) via Hardcover.app API token with automatic library duplicate skipping.
   - **Search Existing Calibre Records**: Highlight books in Calibre and batch-search working mirrors without manual typing.
   - **Optimized Download Speeds**: 512 KB streaming buffers, smart connection limits, and automatic Cloudflare 503 bypasses for reliable transfers.
