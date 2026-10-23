@@ -1,7 +1,6 @@
 # Calibre LibGen Downloader (`calibre-lib`)
 
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/7sarus/calibre-lib?include_prereleases&color=blue)](https://github.com/7sarus/calibre-lib/releases)
-[![Discord](https://img.shields.io/badge/Discord-Join%20Chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/x2cZK7MT)
 [![Telegram](https://img.shields.io/badge/Telegram-2CA5E0?logo=telegram&logoColor=white)](https://t.me/devvdump)
 [![GitHub stars](https://img.shields.io/github/stars/7sarus/calibre-lib?style=social)](https://github.com/7sarus/calibre-lib/stargazers)
 [![GitHub all releases](https://img.shields.io/github/downloads/7sarus/calibre-lib/total)](https://github.com/7sarus/calibre-lib/releases)
