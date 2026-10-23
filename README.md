@@ -137,6 +137,7 @@ Configure:
 
 Join our community for discussions, feature requests, mirror health updates, and bug reports:  
 - 💬 **Discord**: [Join the Discord Community](https://discord.gg/x2cZK7MT)
+- 📱 **Telegram**: [t.me/devvdump](https://t.me/devvdump) | [QR Code](https://api.qrserver.com/v1/create-qr-code/?data=t.me%2Fdevvdump%20%7C%20Calibre%20LibGen%20Downloader&size=200x200)
 - 🤖 **Reddit**: [r/booksdev](https://reddit.com/r/booksdev)
 
 ---
