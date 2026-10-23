@@ -135,9 +135,13 @@ Configure:
 
 ## 💬 Community & Support
 
-Join our community for discussions, feature requests, mirror health updates, and bug reports:  
-- 💬 **Discord**: [Join the Discord Community](https://discord.gg/x2cZK7MT)
-- 🤖 **Reddit**: [r/booksdev](https://reddit.com/r/booksdev)
+<p align="center">
+  <a href="https://t.me/devvdump" target="_blank">
+    <img src="https://img.shields.io/badge/Telegram-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram Channel">
+  </a>
+</p>
+
+Join our community for discussions, feature requests, mirror health updates, and bug reports:
 
 ---
 
