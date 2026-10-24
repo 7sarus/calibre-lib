@@ -107,6 +107,23 @@ prefs.defaults["unique_results"] = True
 prefs.defaults["fast_mode"] = False
 prefs.defaults["concurrent_downloads"] = 1
 prefs.defaults["download_action"] = "Import to Calibre"
+prefs.defaults["active_backend"] = "libgen"
+prefs.defaults["bookracy_enabled"] = True
+prefs.defaults["bookracy_auto_retry_failed"] = True
+
+BACKENDS = {
+    "libgen": "LibGen (Classic)",
+    "bookracy": "Bookracy (api.bookracy.com)",
+    "dual": "Dual Engine (LibGen + Bookracy Failover)",
+}
+
+def get_active_backend():
+    b = prefs.get("active_backend", "libgen")
+    return b if b in BACKENDS else "libgen"
+
+def set_active_backend(backend_name):
+    if backend_name in BACKENDS:
+        prefs["active_backend"] = backend_name
 
 prefs.defaults["download_directory"] = os.path.join(os.path.expanduser("~"), "Downloads", "callib")
 prefs.defaults["save_search_history"] = False
