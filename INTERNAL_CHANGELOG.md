@@ -6,6 +6,15 @@ updated: 2026-10-23
 
 # Internal Change Log
 
+## 2026-10-24
+
+- id: fix-config-backend-merge-loss
+  type: fix
+  files: [config.py]
+  summary: Restored BACKENDS, get_active_backend() and set_active_backend() (plus active_backend/bookracy pref defaults) that were dropped when 63d68f8 resolved the config.py merge by taking the master (v1.50) side. dialog.py/workers.py/scraper.py import these at module level, so the plugin raised ImportError on load and the Calibre toolbar button never registered.
+  why: User reported the previous build did not work; calibre-debug import check reproduced the module-level ImportError crash.
+  validation: rebuilt beta zip and reinstalled via calibre-customize -a; import check (plugin, ui, dialog, scraper, workers, config) passes cleanly.
+
 ## 2026-10-23
 
 - id: release-v1.70b

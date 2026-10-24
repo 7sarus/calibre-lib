@@ -2,6 +2,9 @@
 
 ## [v1.70b] (Beta API Backend Edition)
 
+### Fixes
+- **Startup Crash Fix:** Load-time `ImportError` (missing backend API after a merge) resolved — plugin now loads and registers the toolbar button in Calibre.
+
 ### Highlights
 - **Bookracy Search Provider:** Added support for https://bookracy.com as an optional source queried concurrently with LibGen mirrors.
 - **Dual-Stage Failover Retry:** When all LibGen mirrors fail to download a book, automatically queries Bookracy with exact MD5 match first, then falls back to Title + Author query with format matching.
