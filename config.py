@@ -28,9 +28,9 @@ from qt.core import (
 )
 
 # Plugin Version definitions
-PLUGIN_VERSION = (1, 7, 0)
-_BASE_VERSION_STR = "v1.70b"
-_BUILD_COMMIT = "155"
+PLUGIN_VERSION = (1, 8, 0)
+_BASE_VERSION_STR = "v1.80b-rc1"
+_BUILD_COMMIT = "158"
 
 
 
@@ -70,7 +70,7 @@ DEFAULT_FALLBACK_MIRRORS = (
     "https://libgen.bz",
     "https://libgen.la",
 )
-_VALID_MIRROR_RE = re.compile(r"^https?://(?:www\.)?libgen\.[a-z]{2,}(?::\d+)?/?$", re.IGNORECASE)
+_VALID_MIRROR_RE = re.compile(r"^https?://(?:(?:www\.)?libgen\.[a-z]{2,}|api\.bookracy\.com)(?::\d+)?/?$", re.IGNORECASE)
 
 
 def normalize_mirror_url(url):
@@ -170,6 +170,10 @@ CATEGORIES = {
 
 def get_mirrors():
     """Returns an ordered list of unique mirrors, defaulting to lowest latency first."""
+    backend = get_active_backend()
+    if backend == "bookracy":
+        return ["https://api.bookracy.com"]
+
     primary = normalize_mirror_url(prefs.get("primary_mirror", "https://libgen.li")) or "https://libgen.li"
     fallback_str = prefs.get("fallback_mirrors", "")
     fallbacks = [normalize_mirror_url(m) for m in fallback_str.split(",")]
@@ -184,8 +188,11 @@ def get_mirrors():
 
     pool = []
     for m in [primary] + list(PERMANENT_MIRRORS) + cleaned_fallbacks + cleaned_custom:
-        if m and m not in pool:
+        if m and m != "https://api.bookracy.com" and m not in pool:
             pool.append(m)
+
+    if backend == "dual" and "https://api.bookracy.com" not in pool:
+        pool.append("https://api.bookracy.com")
 
     latencies = prefs.get("mirror_latencies", {})
     if not isinstance(latencies, dict):
@@ -671,6 +678,21 @@ class ConfigWidget(QWidget):
         super().__init__()
         self.layout = QVBoxLayout(self)
 
+        # Backend Engine Selection Group
+        backend_group = QGroupBox("Backend Engine Selection")
+        backend_layout = QFormLayout(backend_group)
+
+        self.backend_combo = QComboBox(self)
+        for code, name in BACKENDS.items():
+            self.backend_combo.addItem(name, code)
+        cur_bk = get_active_backend()
+        for i in range(self.backend_combo.count()):
+            if self.backend_combo.itemData(i) == cur_bk:
+                self.backend_combo.setCurrentIndex(i)
+                break
+        backend_layout.addRow("Active API Backend:", self.backend_combo)
+        self.layout.addWidget(backend_group)
+
         # Mirror Settings Group
         mirror_group = QGroupBox("Mirror Settings")
         mirror_layout = QFormLayout(mirror_group)
@@ -774,7 +796,22 @@ class ConfigWidget(QWidget):
         self.clear_history_btn.clicked.connect(self._confirm_clear_history)
         history_layout.addRow("", self.clear_history_btn)
 
+        # Bookracy Settings Group
+        bookracy_group = QGroupBox("Bookracy Provider & Fallback")
+        bookracy_layout = QFormLayout(bookracy_group)
+
+        self.bookracy_enabled_cb = QCheckBox("Enable Bookracy search and mirror pool", self)
+        self.bookracy_enabled_cb.setChecked(bool(prefs.get("bookracy_enabled", True)))
+        self.bookracy_enabled_cb.setToolTip("Enables searching https://bookracy.com alongside LibGen mirrors.")
+        bookracy_layout.addRow("Provider:", self.bookracy_enabled_cb)
+
+        self.bookracy_auto_retry_cb = QCheckBox("Automatically retry failed LibGen downloads via Bookracy", self)
+        self.bookracy_auto_retry_cb.setChecked(bool(prefs.get("bookracy_auto_retry_failed", True)))
+        self.bookracy_auto_retry_cb.setToolTip("When all LibGen mirrors fail to download a book, automatically queries Bookracy by MD5 and Title as a fallback source.")
+        bookracy_layout.addRow("Failover Retry:", self.bookracy_auto_retry_cb)
+
         self.layout.addWidget(filter_group)
+        self.layout.addWidget(bookracy_group)
         self.layout.addWidget(history_group)
 
         # Informational note
@@ -811,3 +848,8 @@ class ConfigWidget(QWidget):
         prefs["max_search_history"] = self.max_search_history_spin.value()
         prefs["max_download_history"] = self.max_download_history_spin.value()
         prefs["history_retention_days"] = self.retention_days_spin.value()
+        prefs["bookracy_enabled"] = self.bookracy_enabled_cb.isChecked()
+        prefs["bookracy_auto_retry_failed"] = self.bookracy_auto_retry_cb.isChecked()
+        chosen_bk = self.backend_combo.itemData(self.backend_combo.currentIndex())
+        if chosen_bk:
+            set_active_backend(chosen_bk)

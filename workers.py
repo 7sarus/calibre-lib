@@ -330,16 +330,6 @@ class CoverFetchWorker(QThread):
 
     def run(self):
         try:
-            from calibre_plugins.libgen_store.scraper import LibgenScraper
-        except Exception:
-            try:
-                from scraper import LibgenScraper
-            except Exception:
-                if not self._is_aborted:
-                    self.cover_failed.emit(self.detail_url)
-                return
-
-        try:
             scraper = LibgenScraper(timeout=5)
             cover_url = getattr(self.book, "cover_url", "") if self.book else ""
 
@@ -409,7 +399,6 @@ class LiveMirrorWorker(QThread):
     mirrors_discovered = pyqtSignal(list)
     def run(self):
         try:
-            from calibre_plugins.libgen_store.scraper import LibgenScraper
             mirrors = LibgenScraper.fetch_live_mirrors()
             self.mirrors_discovered.emit(mirrors)
         except Exception:

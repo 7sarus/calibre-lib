@@ -409,23 +409,7 @@ class LibgenScraper:
         return books
 
     def _parse_bookracy_json(self, data):
-        books = []
-        for res in data.get("results", []):
-            book = LibgenBook()
-            book.md5 = res.get("md5", "").lower()
-            book.title = res.get("title", "")
-            book.author = res.get("author", "")
-            book.publisher = res.get("publisher", "")
-            book.year = res.get("year", "")
-            book.language = res.get("book_lang", "")
-            book.pages = str(res.get("pages", "")) or res.get("book_length", "")
-            book.size = res.get("book_size", "")
-            book.extension = res.get("book_filetype", "").upper()
-            book.detail_url = res.get("link", "")
-            book.cover_url = res.get("book_image", "") or res.get("external_cover_url", "")
-            if book.title and book.md5:
-                books.append(book)
-        return books
+        return BookracyProvider.parse_books_json(data)
 
     def _parse_search_page(self, soup, mirror):
         """
@@ -1234,75 +1218,9 @@ class LibgenScraper:
         return None
 
     def _find_bookracy_fallback(self, current_md5, title, author=None, ext=None, log_callback=None):
-        """
-        Queries Bookracy API for an alternative download link matching the book.
-        First tries exact MD5 match, then falls back to Title + Author query.
-        """
-        import json
-        headers = {
-            "User-Agent": self.USER_AGENT,
-            "Accept": "application/json",
-            "Origin": "https://bookracy.com",
-            "Referer": "https://bookracy.com/",
-        }
-
-        # 1. Try direct MD5 lookup on Bookracy
-        if current_md5:
-            try:
-                if log_callback:
-                    log_callback(f"⚡ Probing Bookracy fallback for MD5: {current_md5[:8]}...")
-                b = self._get_browser()
-                b.addheaders = list(headers.items())
-                query_url = f"https://api.bookracy.com/api/books?query={quote_plus(current_md5)}&limit=3&page=1&lang=all"
-                with self._open_url(b, query_url, timeout=8) as resp:
-                    data = json.loads(resp.read())
-                    books = self._parse_bookracy_json(data)
-                    for bk in books:
-                        if bk.md5 == current_md5.lower() and bk.detail_url:
-                            if log_callback:
-                                log_callback(f"✓ Found exact MD5 match on Bookracy: {bk.title}")
-                            return bk.detail_url, bk.cover_url
-            except Exception as e:
-                if log_callback:
-                    log_callback(f"Bookracy MD5 lookup error: {e}")
-
-        # 2. Try Title (+ Author) search on Bookracy
-        if title and len(title.strip()) >= 3:
-            clean_title = re.split(r'[:(;,]', title)[0].strip()
-            search_terms = clean_title
-            if author and len(author.strip()) >= 2:
-                clean_author = re.split(r'[,;&]', author)[0].strip()
-                search_terms = f"{clean_title} {clean_author}".strip()
-
-            try:
-                if log_callback:
-                    log_callback(f"⚡ Searching Bookracy fallback for \"{search_terms[:35]}\"...")
-                b = self._get_browser()
-                b.addheaders = list(headers.items())
-                query_url = f"https://api.bookracy.com/api/books?query={quote_plus(search_terms)}&limit=5&page=1&lang=all"
-                with self._open_url(b, query_url, timeout=10) as resp:
-                    data = json.loads(resp.read())
-                    books = self._parse_bookracy_json(data)
-
-                    target_ext = (ext or "").lower()
-                    for bk in books:
-                        if target_ext and (bk.extension or "").lower() != target_ext:
-                            continue
-                        if bk.detail_url:
-                            if log_callback:
-                                log_callback(f"✓ Found title match on Bookracy: \"{bk.title}\" [{bk.extension}]")
-                            return bk.detail_url, bk.cover_url
-
-                    if books and books[0].detail_url:
-                        bk = books[0]
-                        if log_callback:
-                            log_callback(f"✓ Found alternative format on Bookracy: \"{bk.title}\" [{bk.extension}]")
-                        return bk.detail_url, bk.cover_url
-            except Exception as e:
-                if log_callback:
-                    log_callback(f"Bookracy title search skipped ({e}).")
-
-        return None, None
+        return BookracyProvider(timeout=self.timeout).find_fallback(
+            current_md5, title, author=author, ext=ext, log_callback=log_callback
+        )
 
     def resolve_and_download(
         self,
@@ -1679,6 +1597,97 @@ class BookracyProvider:
         self.timeout = timeout
         self.scraper = LibgenScraper(mirrors=[self.MIRROR_URL], timeout=timeout)
 
+    @staticmethod
+    def parse_books_json(data):
+        books = []
+        for res in (data.get("results") or []):
+            book = LibgenBook()
+            book.md5 = (res.get("md5") or "").lower()
+            book.title = res.get("title") or ""
+            book.author = res.get("author") or ""
+            book.publisher = res.get("publisher") or ""
+            book.year = res.get("year") or ""
+            book.language = res.get("book_lang") or ""
+            book.pages = str(res.get("pages") or "") or str(res.get("book_length") or "")
+            book.size = res.get("book_size") or ""
+            book.extension = (res.get("book_filetype") or "").upper()
+            book.detail_url = res.get("link") or ""
+            book.cover_url = res.get("book_image") or res.get("external_cover_url") or ""
+            if book.title and book.md5:
+                books.append(book)
+        return books
+
+    def find_fallback(self, current_md5, title, author=None, ext=None, log_callback=None):
+        """
+        Queries Bookracy API for an alternative download link matching the book.
+        First tries exact MD5 match, then falls back to Title + Author query.
+        """
+        import json
+        headers = {
+            "User-Agent": self.scraper.USER_AGENT,
+            "Accept": "application/json",
+            "Origin": "https://bookracy.com",
+            "Referer": "https://bookracy.com/",
+        }
+
+        # 1. Try direct MD5 lookup on Bookracy
+        if current_md5:
+            try:
+                if log_callback:
+                    log_callback(f"⚡ Probing Bookracy fallback for MD5: {current_md5[:8]}...")
+                b = self.scraper._get_browser()
+                b.addheaders = list(headers.items())
+                query_url = f"{self.MIRROR_URL}/api/books?query={quote_plus(current_md5)}&limit=3&page=1&lang=all"
+                with self.scraper._open_url(b, query_url, timeout=8) as resp:
+                    data = json.loads(resp.read())
+                    books = self.parse_books_json(data)
+                    for bk in books:
+                        if bk.md5 == current_md5.lower() and bk.detail_url:
+                            if log_callback:
+                                log_callback(f"✓ Found exact MD5 match on Bookracy: {bk.title}")
+                            return bk.detail_url, bk.cover_url
+            except Exception as e:
+                if log_callback:
+                    log_callback(f"Bookracy MD5 lookup error: {e}")
+
+        # 2. Try Title (+ Author) search on Bookracy
+        if title and len(title.strip()) >= 3:
+            clean_title = re.split(r'[:(;,]', title)[0].strip()
+            search_terms = clean_title
+            if author and len(author.strip()) >= 2:
+                clean_author = re.split(r'[,;&]', author)[0].strip()
+                search_terms = f"{clean_title} {clean_author}".strip()
+
+            try:
+                if log_callback:
+                    log_callback(f"⚡ Searching Bookracy fallback for \"{search_terms[:35]}\"...")
+                b = self.scraper._get_browser()
+                b.addheaders = list(headers.items())
+                query_url = f"{self.MIRROR_URL}/api/books?query={quote_plus(search_terms)}&limit=5&page=1&lang=all"
+                with self.scraper._open_url(b, query_url, timeout=10) as resp:
+                    data = json.loads(resp.read())
+                    books = self.parse_books_json(data)
+
+                    target_ext = (ext or "").lower()
+                    for bk in books:
+                        if target_ext and (bk.extension or "").lower() != target_ext:
+                            continue
+                        if bk.detail_url:
+                            if log_callback:
+                                log_callback(f"✓ Found title match on Bookracy: \"{bk.title}\" [{bk.extension}]")
+                            return bk.detail_url, bk.cover_url
+
+                    if books and books[0].detail_url:
+                        bk = books[0]
+                        if log_callback:
+                            log_callback(f"✓ Found alternative format on Bookracy: \"{bk.title}\" [{bk.extension}]")
+                        return bk.detail_url, bk.cover_url
+            except Exception as e:
+                if log_callback:
+                    log_callback(f"Bookracy title search skipped ({e}).")
+
+        return None, None
+
     def search(
         self,
         query,
@@ -1722,7 +1731,7 @@ class BookracyProvider:
         try:
             with self.scraper._open_url(b, search_url, timeout=self.timeout) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                raw_books = self.scraper._parse_bookracy_json(data)
+                raw_books = self.parse_books_json(data)
         except Exception as e:
             if progress_callback:
                 try:
@@ -1763,7 +1772,7 @@ class BookracyProvider:
         if not target_url or "api.bookracy.com" not in target_url:
             cur_md5_match = _RE_MD5.search(detail_url) if detail_url else None
             cur_md5 = cur_md5_match.group(1) if cur_md5_match else None
-            target_url, cover_url = self.scraper._find_bookracy_fallback(
+            target_url, cover_url = self.find_fallback(
                 cur_md5, book_title, author=book_author, ext=book_ext, log_callback=log_callback
             )
 
@@ -1818,14 +1827,14 @@ class DualEngineProvider:
 
     def resolve_and_download(self, detail_url, destination_path, **kwargs):
         try:
-            return self.libgen.resolve_and_download(detail_url, destination_path, **kwargs)
+            return self.libgen.resolve_and_download(detail_url, destination_path, allow_bookracy=False, **kwargs)
         except Exception as e:
             cb = kwargs.get("log_callback")
             if cb:
                 cb(f"LibGen download failed ({e}). Retrying via Bookracy...")
             md5_m = _RE_MD5.search(detail_url) if detail_url else None
             current_md5 = md5_m.group(1) if md5_m else None
-            br_url, br_cover = self.libgen._find_bookracy_fallback(
+            br_url, br_cover = self.bookracy.find_fallback(
                 current_md5, kwargs.get("book_title"), kwargs.get("book_author"), kwargs.get("book_ext"), cb
             )
             if br_url:

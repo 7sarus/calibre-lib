@@ -16,7 +16,7 @@ A **Calibre User Interface Action plugin** (`calibre_plugins.libgen_store`) that
 
 - **Upstream repo**: `git@github.com:7sarus/calibre-lib.git` (origin + upstream both point here).
 - **License**: WTFPL. Adapted from [`obsfx/libgen-downloader`](https://github.com/obsfx/libgen-downloader).
-- **Status**: Beta. Active branch `beta`, version `v1.70b`.
+- **Status**: Beta. Active branch `beta`, version `v1.80b-rc1 "Mithrandir"`.
 - **Runtime**: Calibre's **bundled Python 3** and Qt bindings only. Imports must use `qt.core` (Qt5/Qt6 shim), **never** bare `PyQt5`/`PyQt6`.
 - **Hard rule**: zero external dependencies. Only Calibre-bundled `bs4`, `calibre.browser`, `qt.core`, `lxml` (optional, auto-detected).
 
@@ -58,18 +58,20 @@ A **Calibre User Interface Action plugin** (`calibre_plugins.libgen_store`) that
 
 ## 4. Architecture
 
-### Module map (line counts, 2026-10-10)
+### Module map (line counts, 2026-10-28)
 
 | File | Lines | Role |
 |---|---|---|
-| `dialog.py` | 3821 | **Monolith UI**: multi-tab dialog, queue segmentation, review modal, Hardcover importer, library context-menu search |
-| `scraper.py` | 1860 | Mirror resolution, search HTML parsing (BeautifulSoup), segmented download, anti-scraping |
-| `config.py` | 857 | `JSONConfig` prefs, mirror list + latency/CDN memory, history, `ConfigWidget` |
-| `workers.py` | 572 | `SearchWorker`, download worker threads, cover loading, signal fan-out |
-| `ui.py` | 231 | `InterfaceAction` entry point: toolbar button, icon, version label |
+| `dialog.py` | 3238 | Main UI: multi-tab dialog, queue segmentation, search queue, library context-menu |
+| `scraper.py` | 1869 | Mirror resolution, search HTML parsing (BeautifulSoup), Bookracy/DualEngine providers, segmented download |
+| `config.py` | 855 | `JSONConfig` prefs, mirror list + latency/CDN memory, history, `ConfigWidget`, backend isolation |
+| `workers.py` | 561 | `SearchWorker`, `SearchQueueWorker`, download worker threads, cover loading, signal fan-out |
+| `csv_importer.py` | 430 | `CsvImportDialog`: Universal CSV/TXT book list importer with in-library skip check |
+| `ui.py` | 234 | `InterfaceAction` entry point: toolbar button, icon, version label |
 | `hardcover.py` | 221 | Hardcover.app GraphQL client (shelves, lists, ISBNs) |
+| `review_dialog.py` | 168 | `ReviewImportDialog`: Download review modal for Calibre library ingestion |
 | `progress_delegate.py` | 123 | `QStyledItemDelegate`: smooth vector progress bars with MB/speed/ETA |
-| `queue_manager.py` | 50 | `QueueManager(QObject)` — list wrapper emitting `queue_updated` |
+| `queue_manager.py` | 62 | `QueueManager(QObject)`: list wrapper with batch `extend` & `remove_indices` emitting `queue_updated` |
 | `__init__.py` | 33 | `LibgenDownloaderPlugin(InterfaceActionBase)` metadata + config hook |
 | `calibre_dialog.ui` | — | Qt Designer form, loaded at runtime |
 

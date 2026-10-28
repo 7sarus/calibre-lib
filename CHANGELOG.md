@@ -1,5 +1,18 @@
 # Changelog
 
+## [v1.80b-rc1 "Mithrandir"] - 2026-10-28
+
+### Community
+- 💬 **Telegram Group:** [Join @devvdump on Telegram](https://t.me/devvdump)
+
+### Highlights & Modular Architecture
+- **Modularized Subdialog Architecture**: Extracted `CsvImportDialog` into `csv_importer.py` and `ReviewImportDialog` into `review_dialog.py`, purging over 580 lines of inline clutter, dead progress delegates, and obsolete imports from `dialog.py`.
+- **Decoupled Backend Providers**: Fully isolated `BookracyProvider` with native JSON parsing and direct MD5/title fallback methods; `DualEngineProvider` cleanly coordinates failover without duplicate fallback inquiries.
+- **Queue Batch Operations**: Added batch `extend` and `remove_indices` to `QueueManager`, reducing bulk queue staging from $O(N \cdot M)$ table redraws to $O(N+M)$ with a single clean refresh.
+- **Resumable Search Queue Pause**: Pausing a search queue run now retains and evicts completed records, allowing pause and resume without re-querying finished titles.
+- **Strict Backend Mirror Isolation**: Restored strict mirror pool isolation (`bookracy` mode returns only the Bookracy API; `libgen` excludes Bookracy; `dual` combines both) and re-added the Active API Backend dropdown to Preferences.
+- **Packaging Integrity**: Added `csv_importer.py` and `review_dialog.py` to plugin build sources and added guarded dual-mode imports in `ui.py`.
+
 ## [v1.70b] (Beta API Backend Edition)
 
 ### Fixes

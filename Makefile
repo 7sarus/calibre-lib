@@ -1,5 +1,5 @@
 PLUGIN_NAME = libgen_downloader.zip
-SOURCES = __init__.py ui.py dialog.py scraper.py workers.py queue_manager.py config.py hardcover.py progress_delegate.py plugin-import-name-libgen_store.txt images/icon.png
+SOURCES = __init__.py ui.py dialog.py scraper.py workers.py queue_manager.py config.py hardcover.py progress_delegate.py csv_importer.py review_dialog.py plugin-import-name-libgen_store.txt images/icon.png
 COMMIT_COUNT = $(shell git rev-list --count HEAD 2>/dev/null || echo "449")
 
 .PHONY: all build install uninstall test clean release release-beta
@@ -13,7 +13,7 @@ $(PLUGIN_NAME): $(SOURCES)
 	@rm -f $(PLUGIN_NAME)
 	@sed -i 's/^_BUILD_COMMIT = .*/_BUILD_COMMIT = "$(COMMIT_COUNT)"/' config.py
 	@zip -q -r $(PLUGIN_NAME) $(SOURCES)
-	@echo "Successfully created $(PLUGIN_NAME) (v1.70b-$(COMMIT_COUNT))"
+	@echo "Successfully created $(PLUGIN_NAME) (v1.80b-rc1-$(COMMIT_COUNT))"
 
 install: build
 	@echo "Installing $(PLUGIN_NAME) into Calibre..."

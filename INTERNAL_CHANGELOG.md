@@ -6,6 +6,22 @@ updated: 2026-10-23
 
 # Internal Change Log
 
+## 2026-10-28
+
+- id: release-v1.80b-rc1-mithrandir
+  type: release
+  files: [config.py, __init__.py, CHANGELOG.md, README.md, Makefile, llm.md]
+  summary: Release v1.80b-rc1 "Mithrandir" (Beta) with modularized subdialog architecture, decoupled Bookracy/DualEngine providers, QueueManager batch optimization, resumable search queue, and restored backend isolation.
+  why: User requested push and release for beta 1.80 rc1 "Mithrandir" with changelog and Telegram link.
+  validation: calibre-debug test assertion suite and UI instantiation tests pass cleanly.
+
+- id: refactor-beta-modularization-and-optimization
+  type: refactor
+  files: [dialog.py, csv_importer.py, review_dialog.py, scraper.py, queue_manager.py, config.py, workers.py, ui.py, Makefile]
+  summary: Modularized beta features without look/feel change. Extracted CsvImportDialog to csv_importer.py and ReviewImportDialog to review_dialog.py, purging 582 lines of dead code and obsolete imports from dialog.py. Decoupled BookracyProvider and DualEngineProvider with native fallback and JSON parsing. Added batch operations (extend, remove_indices) to QueueManager and optimized queue additions to O(N+M) with a single table redraw. Restored Bookracy backend mirror isolation and backend combo in ConfigWidget. Added guarded dual import in ui.py.
+  why: User requested rewriting beta features focusing on modularization, optimization, and refactoring under ponytail rules.
+  validation: calibre-debug test assertion suite and UI instantiation tests pass cleanly.
+
 ## 2026-10-24
 
 - id: fix-config-backend-merge-loss

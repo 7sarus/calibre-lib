@@ -8,7 +8,10 @@ Adds a dedicated button to Calibre's main toolbar and menu.
 
 from qt.core import QIcon, QPixmap, QAction
 from calibre.gui2.actions import InterfaceAction
-from calibre_plugins.libgen_store.dialog import LibgenDialog
+try:
+    from calibre_plugins.libgen_store.dialog import LibgenDialog
+except ImportError:
+    from dialog import LibgenDialog
 
 
 class LibgenAction(InterfaceAction):

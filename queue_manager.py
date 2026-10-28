@@ -37,8 +37,20 @@ class QueueManager(QObject):
         self.queue_updated.emit()
 
     def extend(self, items):
+        if not items:
+            return
         self._items.extend(items)
         self.queue_updated.emit()
+
+    def remove_indices(self, indices):
+        """Removes multiple items by index, emitting queue_updated only once."""
+        changed = False
+        for idx in sorted(indices, reverse=True):
+            if 0 <= idx < len(self._items):
+                del self._items[idx]
+                changed = True
+        if changed:
+            self.queue_updated.emit()
 
     def clear(self):
         self._items.clear()
