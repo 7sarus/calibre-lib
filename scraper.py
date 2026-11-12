@@ -1827,7 +1827,11 @@ class DualEngineProvider:
 
     def resolve_and_download(self, detail_url, destination_path, **kwargs):
         try:
-            return self.libgen.resolve_and_download(detail_url, destination_path, allow_bookracy=False, **kwargs)
+            # Prevent duplicate keyword arguments when workers already pass
+            # allow_bookracy, while keeping the wrapper's fallback in control.
+            libgen_kwargs = dict(kwargs)
+            libgen_kwargs["allow_bookracy"] = False
+            return self.libgen.resolve_and_download(detail_url, destination_path, **libgen_kwargs)
         except Exception as e:
             cb = kwargs.get("log_callback")
             if cb:
