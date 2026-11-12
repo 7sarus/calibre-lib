@@ -146,7 +146,13 @@ Join our community for discussions, feature requests, mirror health updates, and
 
 ## 📦 Releases & Version History
 
-- **[v1.70b (Latest Release)](https://github.com/7sarus/calibre-lib/releases)**:
+- **[v1.80b-rc1 "Mithrandir" (Latest Release)](https://github.com/7sarus/calibre-lib/releases/tag/v1.80b-rc1)**:
+  - **Modular Subdialogs**: `CsvImportDialog` and `ReviewImportDialog` extracted to standalone modules; purged 580+ lines from main dialog.
+  - **Decoupled Providers**: Bookracy provider operates autonomously with native JSON parsing and direct fallback probing.
+  - **Queue Batch Operations**: Efficient $O(N+M)$ queue additions via batch `extend` and atomic removal `remove_indices`.
+  - **Resumable Search Queue**: Pausing retains progress and evicts completed records, enabling clean resumption.
+  - **Restored Backend Isolation**: Complete separation of LibGen and Bookracy mirror pools and Preferences backend selection.
+- **[v1.70b](https://github.com/7sarus/calibre-lib/releases)**:
   - **Bookracy API Backend & Provider**: Secondary book provider querying Bookracy concurrently with LibGen mirrors.
   - **Dual-Stage Failover Recovery**: Automatically recovers failed downloads with exact MD5 matching first, then Title + Author fallback.
   - **"Retry with Bookracy" Queue Action**: Instant queue toolbar button and live fallback toggle for seamless retry workflows.
