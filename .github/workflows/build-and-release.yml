@@ -43,5 +43,6 @@ jobs:
           name: ${{ github.ref_name }}
           files: libgen_downloader.zip
           prerelease: false
+          make_latest: true
           generate_release_notes: true
 
