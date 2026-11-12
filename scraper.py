@@ -1833,6 +1833,8 @@ class DualEngineProvider:
             libgen_kwargs["allow_bookracy"] = False
             return self.libgen.resolve_and_download(detail_url, destination_path, **libgen_kwargs)
         except Exception as e:
+            if not kwargs.get("allow_bookracy", True):
+                raise e
             cb = kwargs.get("log_callback")
             if cb:
                 cb(f"LibGen download failed ({e}). Retrying via Bookracy...")
