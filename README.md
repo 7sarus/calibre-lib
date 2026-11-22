@@ -10,6 +10,12 @@ A native **Calibre User Interface Action Plugin** that adds a dedicated **LibGen
 
 Search books directly across Library Genesis mirrors, lock or filter by language and format (EPUB, PDF, MOBI, AZW3, etc.), queue multiple books into a **Bulk Download Queue**, and download them all together directly into your Calibre library.
 
+<p align="center">
+  <img src="images/screenshot.jpg" alt="LibGen Downloader v1.90b running in Calibre" width="850">
+  <br>
+  <em>LibGen Downloader v1.90b "Ducky" running fullscreen in Calibre 9.18 on Arch Linux.</em>
+</p>
+
 ---
 
 ## ✨ Features
