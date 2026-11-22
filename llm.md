@@ -16,7 +16,7 @@ A **Calibre User Interface Action plugin** (`calibre_plugins.libgen_store`) that
 
 - **Upstream repo**: `git@github.com:7sarus/calibre-lib.git` (origin + upstream both point here).
 - **License**: WTFPL. Adapted from [`obsfx/libgen-downloader`](https://github.com/obsfx/libgen-downloader).
-- **Status**: Beta. Active branch `beta`, version `v1.80b-rc1 "Mithrandir"`.
+- **Status**: Beta. Active branch `beta`, version `v1.90b "Ducky"`.
 - **Runtime**: Calibre's **bundled Python 3** and Qt bindings only. Imports must use `qt.core` (Qt5/Qt6 shim), **never** bare `PyQt5`/`PyQt6`.
 - **Hard rule**: zero external dependencies. Only Calibre-bundled `bs4`, `calibre.browser`, `qt.core`, `lxml` (optional, auto-detected).
 
@@ -28,9 +28,10 @@ A **Calibre User Interface Action plugin** (`calibre_plugins.libgen_store`) that
 |---|---|
 | Active branch | `beta` (do **not** promote to `master` without explicit instruction) |
 | Other branches | `master`, `feat/bookracy`, `backup-before-rebase` |
-| Commit count | 157 — mirrors `config.py:_BUILD_COMMIT` and every `v1.xxb-NNN` artifact |
-| Latest commit | `a545a16` Restore backend layer (`BACKENDS`, `get_active_backend`, `set_active_backend`) dropped by the bad merge resolution in `63d68f8` |
-| Dirty tree | `config.py` carries only the uncommitted `_BUILD_COMMIT` stamp from the last build |
+| Commit count | 165 (HEAD of `beta`) — mirrors `config.py:_BUILD_COMMIT` and every `v1.xxb-NNN` artifact |
+| Latest commit | `3122599` ci(release): mark newest beta and stable releases as Latest |
+| Unpushed | `beta`: `c69acd3`, `3122599`. `master`: `ff18507` (README lists v1.80b-rc1 as Latest). User pushes manually |
+| Dirty tree | `config.py` has an uncommitted `_BUILD_COMMIT` stamp (161) from a build; `llm.md` has pending edits |
 | Built artifacts | `libgen_downloader*.zip` are gitignored build output, not sources |
 
 ---
@@ -135,6 +136,9 @@ Never collapse these to a single import — it breaks one of the two load paths.
 3. **Mirror drift is the main external risk.** LibGen domains change; `DEFAULT_FALLBACK_MIRRORS` and the mirror cache need periodic re-validation via `ping_mirrors.py`.
 4. **Import-completeness audit after any `config.py` merge**: `63d68f8` "resolve merge conflict" silently took the master (v1.50) side and dropped `BACKENDS` / `get_active_backend` / `set_active_backend`, crashing the plugin on load (2026-10-24). After touching config.py, re-run the `calibre-debug` import check across all modules before building.
 5. **Recent hot-fix cluster** (all in `git log`): missing-import crashes in `workers.py`/`dialog.py`, `queue_updated` signal firing before `setup_ui`, search parser dropping `detail_url`, collapsed-`colspan=5` Comics rows, `IndexError` in `on_item_progress`/`on_item_status`. When touching these paths, re-verify import completeness and signal ordering.
+6. **Beta-to-master promotion status**: Dry run verified clean with 0 code conflicts; `README.md` and `llm.md` conflict resolution strategy established via `--theirs`. Ready on standby awaiting user promotion instruction.
+7. **Dual fallback** (`scraper.py:DualEngineProvider.resolve_and_download`): PR #4 (duplicate `allow_bookracy` kwarg) merged as `1cb05b4`. `c69acd3` makes dual mode respect `allow_bookracy=False` (no Bookracy fallback). Verified with stub asserts only, not inside Calibre.
+8. **Release flags**: `build-beta.yml` publishes beta as a full release with `make_latest: true`, because GitHub never marks pre-releases Latest. `build-and-release.yml` sets `make_latest: true`. `make release-beta` in the Makefile still passes `--prerelease`; switch to `--latest` to match. `v1.80b-rc1` was set to full + Latest on GitHub manually.
 
 ---
 

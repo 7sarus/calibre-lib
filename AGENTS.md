@@ -9,6 +9,7 @@ This workspace inherits the machine-level Antigravity/Gemini rules from:
 - `/home/thomas/.gemini/config/rules/instruction-following.md`
 - `/home/thomas/.gemini/config/rules/i-have-adhd.md`
 - `/home/thomas/.gemini/config/rules/tech-notes.md`
+- `/home/thomas/.gemini/config/rules/release-changelogs.md`
 - `/home/thomas/.gemini/antigravity-cli/settings.json`
 
 ## Working Style
