@@ -3,7 +3,6 @@ import re
 import time
 import threading
 import collections
-from collections import OrderedDict
 import concurrent.futures
 from urllib.parse import urlparse
 
@@ -146,8 +145,10 @@ class SearchQueueWorker(QThread):
             label = f"{title} - {author}".strip(" -") or isbn or f"Record #{record_index}"
             host = urlparse(assigned_mirror).netloc or assigned_mirror
             tag = " [Deferred Retry]" if is_deferred else ""
+            with results_lock:
+                current_done = completed[0]
             self.progress_signal.emit(
-                completed[0] + 1,
+                current_done + 1,
                 total,
                 label,
                 f"Lane {((record_index - 1) % len(top_mirrors)) + 1}: querying {host} for '{label}'{tag} (max 1)...",
@@ -230,7 +231,9 @@ class SearchQueueWorker(QThread):
                 else:
                     # Difficult entry: defer to end of the list
                     deferred_records.append((idx, rec))
-                    self.progress_signal.emit(completed[0], total, label, f"↷ Deferring '{label[:30]}' to end of queue...")
+                    with results_lock:
+                        current_done = completed[0]
+                    self.progress_signal.emit(current_done, total, label, f"↷ Deferring '{label[:30]}' to end of queue...")
 
         # Pass 2: Retry deferred entries at the end of the list with broader timeout
         if deferred_records and not self._is_aborted:
@@ -450,33 +453,35 @@ class BulkDownloadWorker(QThread):
                 fail_count_ref = [0]
 
                 def process_item(idx, item):
+                    def on_log(msg):
+                        t_now = time.strftime('%H:%M:%S')
+                        self.log_message.emit(f"[{t_now}] {msg}")
+
                     try:
                         if self._is_aborted:
                             return
 
-                        book = item["book"]
+                        book = item.get("book") if isinstance(item, dict) else getattr(item, "book", None)
+                        if not book:
+                            raise ValueError("Queue item is missing book object")
                         with dl_lock:
                             current_num[0] += 1
                             c_num = current_num[0]
 
                         ts = time.strftime('%H:%M:%S')
-                        short_title = (book.title or "Unknown")[:45]
+                        short_title = (getattr(book, "title", None) or "Unknown")[:45]
                         self.log_message.emit(f"[{ts}] [{c_num}/{total_pending}] Starting: \"{short_title}\"")
                         self.item_status.emit(idx, "Resolving mirror link...")
 
-                        ext = (book.extension or "epub").lower()
-                        safe_title = sanitize_filename(book.title or "Unknown")
-                        safe_author = sanitize_filename(book.author or "Unknown")
+                        ext = (getattr(book, "extension", None) or "epub").lower()
+                        safe_title = sanitize_filename(getattr(book, "title", None) or "Unknown")
+                        safe_author = sanitize_filename(getattr(book, "author", None) or "Unknown")
                         base_dest_file = os.path.join(download_dir, f"{safe_title} - {safe_author}.{ext}")
                         dest_file = base_dest_file
                         suffix = 1
                         while os.path.exists(dest_file):
                             dest_file = os.path.join(download_dir, f"{safe_title} - {safe_author} ({suffix}).{ext}")
                             suffix += 1
-
-                        def on_log(msg):
-                            t_now = time.strftime('%H:%M:%S')
-                            self.log_message.emit(f"[{t_now}] {msg}")
 
                         def on_progress(bytes_read, total, speed_kb=0.0):
                             self.item_progress.emit(idx, bytes_read, total, float(speed_kb))

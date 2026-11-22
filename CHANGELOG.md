@@ -1,5 +1,24 @@
 # Changelog
 
+## [v1.80b-rc2] - 2026-11-22
+
+### What's New
+- Added a one-click "Copy Diagnostics" button to the Mirrors and Queue tabs to easily copy system details, Calibre version, and mirror logs for bug reports.
+- Hidden the live activity log by default for a clean, distraction-free queue; triple-clicking the version badge (or right-clicking it) reveals the activity log and animations.
+- Hidden redundant buttons across the dialog (duplicate Bookracy retry, fake download pause, and redundant sort buttons) to simplify the interface.
+
+### Fixes
+- Fixed download summaries showing historical CDN speeds from earlier sessions instead of the mirrors actually used in that download.
+- Removed the dead `libgen.me` mirror from default configurations so automatic mirror selection never routes searches to an empty page (fixes #5).
+- Fixed a dual-engine crash where duplicate arguments were passed during failover downloads.
+- Fixed a race condition in search queue workers that caused progress counters to jump or skip numbers under concurrency.
+- Prevented latency pings from flipping the working primary mirror mid-session.
+
+### Under the Hood
+- Calibre starts up ~100 ms faster by dropping an unnecessary git process check on plugin import.
+- Added an offline test suite with 6 tests covering table parsing, deduplication, and UI behavior.
+- Deduplicated mirror lists across the scraper and config modules.
+
 ## [v1.80b-rc1 "Mithrandir"] - 2026-10-28
 
 ### Community

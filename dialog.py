@@ -133,6 +133,8 @@ try:
         discard_mirrors,
         PLUGIN_VERSION_STR,
         get_fastest_cdns,
+        get_session_cdns,
+        reset_session_cdns,
         append_search_history,
         get_search_history,
         get_search_history_filepath,
@@ -166,6 +168,8 @@ except (ImportError, ModuleNotFoundError):
         discard_mirrors,
         PLUGIN_VERSION_STR,
         get_fastest_cdns,
+        get_session_cdns,
+        reset_session_cdns,
         append_search_history,
         get_search_history,
         get_search_history_filepath,
@@ -187,9 +191,11 @@ except (ImportError, ModuleNotFoundError):
 try:
     from calibre_plugins.libgen_store.csv_importer import CsvImportDialog
     from calibre_plugins.libgen_store.review_dialog import ReviewImportDialog
+    from calibre_plugins.libgen_store.log_collector import copy_diagnostics_to_clipboard
 except ImportError:
     from csv_importer import CsvImportDialog
     from review_dialog import ReviewImportDialog
+    from log_collector import copy_diagnostics_to_clipboard
 
 
 def serialize_book(book):
@@ -494,17 +500,7 @@ class LibgenDialog(QDialog):
         )
         self.side_neko_label.setVisible(self.show_cats)
         right_layout.addWidget(self.side_neko_label)
-
-        self.side_mirror_header = QLabel("<b>🌐 Live Mirrors & CDNs</b>")
-        self.side_mirror_header.setVisible(self.show_stats)
-        right_layout.addWidget(self.side_mirror_header)
-
-        self.side_mirror_status = QPlainTextEdit(self)
-        self.side_mirror_status.setReadOnly(True)
-        self.side_mirror_status.setFixedWidth(230)
-        self.side_mirror_status.setStyleSheet(MONO_PANEL_STYLE)
-        self.side_mirror_status.setVisible(self.show_stats)
-        right_layout.addWidget(self.side_mirror_status)
+        right_layout.addStretch()
         base_layout.addWidget(right_widget, stretch=1)
 
 
@@ -643,6 +639,7 @@ class LibgenDialog(QDialog):
         adv_row2.addWidget(self.mirror_combo)
 
         self.fetch_mirrors_btn = QPushButton("Fetch Live")
+        self.fetch_mirrors_btn.setVisible(False)
         self.fetch_mirrors_btn.setToolTip("Fetch active mirrors from open-slum.org")
         self.fetch_mirrors_btn.clicked.connect(self.manual_fetch_mirrors)
         adv_row2.addWidget(self.fetch_mirrors_btn)
@@ -871,16 +868,30 @@ class LibgenDialog(QDialog):
         self.queue_table.setItemDelegateForColumn(6, ProgressBarDelegate(self.queue_table))
         queue_layout.addWidget(self.queue_table)
 
-        # Collapsible Live Activity Log
+        # Collapsible Live Activity Log (Hidden unless toggled via Easter Egg)
+        self.live_activity_container = QWidget(self)
+        activity_layout = QVBoxLayout(self.live_activity_container)
+        activity_layout.setContentsMargins(0, 0, 0, 0)
+        activity_layout.setSpacing(4)
+
         log_header_box = QHBoxLayout()
-        self.log_toggle_btn = QPushButton("▶ Live Activity Log", self)
+        self.log_toggle_btn = QPushButton("▼ Live Activity Log", self)
         self.log_toggle_btn.setFlat(True)
         self.log_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.log_toggle_btn.setStyleSheet("text-align: left; font-weight: 600; color: palette(text); font-size: 11px; padding: 2px;")
         self.log_toggle_btn.clicked.connect(self.toggle_activity_log)
         log_header_box.addWidget(self.log_toggle_btn)
+
+        self.copy_debug_log_btn = QPushButton("📋 Copy Debug Log", self)
+        self.copy_debug_log_btn.setFlat(True)
+        self.copy_debug_log_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.copy_debug_log_btn.setStyleSheet("font-size: 11px; font-weight: 600; padding: 2px 6px; color: palette(link);")
+        self.copy_debug_log_btn.setToolTip("Collect environment, versions, mirrors, and session activity to clipboard")
+        self.copy_debug_log_btn.clicked.connect(self.copy_diagnostic_log)
+        log_header_box.addWidget(self.copy_debug_log_btn)
+
         log_header_box.addStretch(1)
-        queue_layout.addLayout(log_header_box)
+        activity_layout.addLayout(log_header_box)
 
         self.log_view = QPlainTextEdit(self)
         self.log_view.setReadOnly(True)
@@ -889,8 +900,11 @@ class LibgenDialog(QDialog):
         self.log_view.setFixedHeight(log_h)
         self.log_view.setStyleSheet(MONO_PANEL_STYLE)
         self.log_view.setPlaceholderText("Live download events, mirror cycles, and streaming chunks will appear here...")
-        self.log_view.setVisible(False)
-        queue_layout.addWidget(self.log_view)
+        self.log_view.setVisible(True)
+        activity_layout.addWidget(self.log_view)
+
+        self.live_activity_container.setVisible(self.show_stats)
+        queue_layout.addWidget(self.live_activity_container)
 
         # Queue Bottom Buttons (Two compact rows)
         q_row1 = QHBoxLayout()
@@ -904,6 +918,7 @@ class LibgenDialog(QDialog):
         q_row1.addWidget(self.remove_queue_btn)
 
         self.clear_queue_btn = QPushButton("Clear Queue", self)
+        self.clear_queue_btn.setVisible(False)
         self.clear_queue_btn.clicked.connect(self.clear_queue)
         q_row1.addWidget(self.clear_queue_btn)
 
@@ -919,6 +934,7 @@ class LibgenDialog(QDialog):
 
         self.retry_bookracy_btn = QPushButton("Retry with Bookracy", self)
         self.retry_bookracy_btn.setStyleSheet(COMPACT_BUTTON_STYLE)
+        self.retry_bookracy_btn.setVisible(False)
         self.retry_bookracy_btn.setToolTip("Reroute failed or pending downloads directly through Bookracy")
         self.retry_bookracy_btn.clicked.connect(self.retry_failed_with_bookracy)
         q_row1.addWidget(self.retry_bookracy_btn)
@@ -1017,6 +1033,7 @@ class LibgenDialog(QDialog):
         mirror_actions_bar.addWidget(self.test_all_mirrors_btn)
 
         self.sort_speed_btn = QPushButton("Sort by Speed", self)
+        self.sort_speed_btn.setVisible(False)
         self.sort_speed_btn.setStyleSheet("font-weight: bold;")
         self.sort_speed_btn.clicked.connect(self.sort_mirrors_by_speed)
         mirror_actions_bar.addWidget(self.sort_speed_btn)
@@ -1030,6 +1047,12 @@ class LibgenDialog(QDialog):
         self.discard_dead_btn.setToolTip("Remove mirrors that failed latency/bandwidth tests from your configured mirrors")
         self.discard_dead_btn.clicked.connect(self.discard_dead_mirrors)
         mirror_actions_bar.addWidget(self.discard_dead_btn)
+
+        self.copy_diag_mirror_btn = QPushButton("📋 Copy Diagnostics", self)
+        self.copy_diag_mirror_btn.setStyleSheet(COMPACT_BUTTON_STYLE)
+        self.copy_diag_mirror_btn.setToolTip("Copy system versions, mirror latencies, and diagnostic logs to clipboard")
+        self.copy_diag_mirror_btn.clicked.connect(self.copy_diagnostic_log)
+        mirror_actions_bar.addWidget(self.copy_diag_mirror_btn)
 
         mirror_actions_bar.addStretch()
         mirrors_layout.addLayout(mirror_actions_bar)
@@ -1211,26 +1234,26 @@ class LibgenDialog(QDialog):
         if self.version_click_count >= 3:
             self.version_click_count = 0
             self.version_click_timer.stop()
-            self.show_stats = not self.show_stats
-            self.show_cats = self.show_stats
-            prefs["show_download_stats"] = self.show_stats
-            prefs["show_cats"] = self.show_cats
-            self._update_version_badge_style()
-            if hasattr(self, "neko_label"):
-                self.neko_label.setVisible(self.show_cats)
-            if hasattr(self, "side_neko_label"):
-                self.side_neko_label.setVisible(self.show_cats)
-            if hasattr(self, "side_mirror_header"):
-                self.side_mirror_header.setVisible(self.show_stats)
-            if hasattr(self, "side_mirror_status"):
-                self.side_mirror_status.setVisible(self.show_stats)
-            status_msg = "enabled" if self.show_stats else "disabled"
-            self.status_label.setText(f"Cats and stats {status_msg}.")
-            self.append_log(f"[CONFIG] Cats and download stats {status_msg} (toggled via version badge).")
-            if hasattr(self, "toast"):
-                toast_icon = "🐾" if self.show_stats else "🙈"
-                self.toast.show_toast(f"{toast_icon} Cats, Stats & Mirror Panel {status_msg.capitalize()}")
+            self.toggle_easter_egg()
 
+    def toggle_easter_egg(self):
+        self.show_stats = not self.show_stats
+        self.show_cats = self.show_stats
+        prefs["show_download_stats"] = self.show_stats
+        prefs["show_cats"] = self.show_cats
+        self._update_version_badge_style()
+        if hasattr(self, "neko_label"):
+            self.neko_label.setVisible(self.show_cats)
+        if hasattr(self, "side_neko_label"):
+            self.side_neko_label.setVisible(self.show_cats)
+        if hasattr(self, "live_activity_container"):
+            self.live_activity_container.setVisible(self.show_stats)
+        status_msg = "enabled" if self.show_stats else "disabled"
+        self.status_label.setText(f"Live activity log and cats {status_msg}.")
+        self.append_log(f"[CONFIG] Live activity log and cats {status_msg} (toggled via version badge).")
+        if hasattr(self, "toast"):
+            toast_icon = "🐾" if self.show_stats else "🙈"
+            self.toast.show_toast(f"{toast_icon} Live Activity Log & Cats {status_msg.capitalize()}")
 
     def _update_version_badge_style(self):
         if not hasattr(self, "version_badge"):
@@ -1239,17 +1262,24 @@ class LibgenDialog(QDialog):
             self.version_badge.setStyleSheet(
                 "color: palette(highlight); font-size: 11px; padding: 2px 6px; background: palette(base); border: 1px solid palette(highlight); border-radius: 3px; font-weight: 600;"
             )
-            self.version_badge.setToolTip("Cats & download statistics active (Click 3x to hide)")
+            self.version_badge.setToolTip("Cats & stats active (Left-click 3x to hide | Right-click for menu)")
         else:
             self.version_badge.setStyleSheet(
                 "color: palette(text); font-size: 11px; padding: 2px 6px; background: palette(base); border: 1px solid palette(mid); border-radius: 3px;"
             )
-            self.version_badge.setToolTip("Version info (Click 3x for cats/stats | Right-click for Backend)")
+            self.version_badge.setToolTip("Version info (Left-click 3x or Right-click for cats/stats)")
 
     def show_backend_context_menu(self, pos):
         from qt.core import QMenu, QAction
         menu = QMenu(self)
-        menu.setTitle("⚡ API Backend Selection")
+
+        # Toggle Live Activity Log & Cats directly in context menu
+        toggle_action = QAction("🐾 Live Activity Log & Cats", menu)
+        toggle_action.setCheckable(True)
+        toggle_action.setChecked(self.show_stats)
+        toggle_action.triggered.connect(self.toggle_easter_egg)
+        menu.addAction(toggle_action)
+        menu.addSeparator()
 
         try:
             from calibre_plugins.libgen_store.config import get_active_backend, BACKENDS
@@ -1309,7 +1339,7 @@ class LibgenDialog(QDialog):
         if hasattr(self, "mirror_combo"):
             self.mirror_combo.setVisible(not is_bookracy)
         if hasattr(self, "fetch_mirrors_btn"):
-            self.fetch_mirrors_btn.setVisible(not is_bookracy)
+            self.fetch_mirrors_btn.setVisible(False)
         if hasattr(self, "filter_label"):
             self.filter_label.setVisible(not is_bookracy)
         if hasattr(self, "filter_combo"):
@@ -1319,7 +1349,7 @@ class LibgenDialog(QDialog):
         if hasattr(self, "bookracy_fallback_checkbox"):
             self.bookracy_fallback_checkbox.setVisible(not is_bookracy)
         if hasattr(self, "retry_bookracy_btn"):
-            self.retry_bookracy_btn.setVisible(not is_bookracy)
+            self.retry_bookracy_btn.setVisible(False)
 
         # Hide/show 'Mirrors & Health' tab when in Bookracy mode
         if hasattr(self, "tabs") and hasattr(self, "tab_mirrors"):
@@ -2409,13 +2439,6 @@ class LibgenDialog(QDialog):
         if is_ok and ms > 0:
             record_mirror_latency(url, ms)
         self.populate_mirrors_table()
-        
-        host = urlparse(url).netloc or url
-        icon = "🟢" if is_ok else "🔴"
-        lat_tag = f"📶 {ms}ms" if ms > 0 else ""
-        speed_tag = f"⚡ {speed_str}" if (is_ok and speed_str) else ""
-        detail = f"{lat_tag} {speed_tag}".strip()
-        self.side_mirror_status.appendPlainText(f"{icon} {host} {detail}")
 
     def on_all_mirrors_tested(self):
         self.test_all_mirrors_btn.setEnabled(True)
@@ -2581,6 +2604,14 @@ class LibgenDialog(QDialog):
             self.log_view.appendPlainText(text)
             self.log_view.verticalScrollBar().setValue(self.log_view.verticalScrollBar().maximum())
 
+    def copy_diagnostic_log(self):
+        """Collects environment, OS, Calibre, mirrors, and activity logs to clipboard."""
+        raw_log = self.log_view.toPlainText() if hasattr(self, "log_view") and self.log_view is not None else ""
+        copy_diagnostics_to_clipboard(session_log=raw_log)
+        if hasattr(self, "toast"):
+            self.toast.show_toast("📋 Diagnostics copied to clipboard")
+        self.status_label.setText("✓ Diagnostic details copied to clipboard (ready to paste in GitHub)")
+
     def get_download_directory(self):
         default_dir = os.path.join(os.path.expanduser("~"), "Downloads", "callib")
         raw_dir = prefs.get("download_directory", default_dir) or default_dir
@@ -2683,6 +2714,7 @@ class LibgenDialog(QDialog):
         
         import time
         self.bulk_start_time = time.time()
+        reset_session_cdns()
 
         if target_indices is not None and not isinstance(target_indices, bool):
             self.session_target_indices = list(target_indices)
@@ -2702,7 +2734,7 @@ class LibgenDialog(QDialog):
 
         self.start_download_btn.setVisible(False)
         if hasattr(self, "pause_download_btn"):
-            self.pause_download_btn.setVisible(True)
+            self.pause_download_btn.setVisible(False)
             self.pause_download_btn.setText("⏸ Pause Download")
         self.stop_download_btn.setVisible(True)
         self.stop_download_btn.setEnabled(True)
@@ -2824,10 +2856,6 @@ class LibgenDialog(QDialog):
             self.queue_manager[idx]["status"] = status_text
             self.queue_table.setItem(idx, 4, QTableWidgetItem(status_text))
             self._schedule_filter()
-        
-        if stage in ("streaming", "segmented"):
-            stage_icon = "🧩" if stage == "segmented" else "⚡"
-            self.side_mirror_status.appendPlainText(f"{stage_icon} [CDN] {host}")
 
     def on_item_status(self, idx, status_text):
         if idx < len(self.queue_manager):
@@ -3010,18 +3038,7 @@ class LibgenDialog(QDialog):
         else:
             speed_str = "0 KB/s"
 
-        fastest_cdns = get_fastest_cdns()
-        if fastest_cdns:
-            medals = ["🏆 1st", "🥈 2nd", "🥉 3rd", "4th", "5th"]
-            cdn_ranking_lines = []
-            for i, (h, s) in enumerate(fastest_cdns[:5]):
-                m_tag = medals[i] if i < len(medals) else f"#{i+1}"
-                cdn_ranking_lines.append(f"{m_tag} {h} ({s:.1f} KB/s)")
-            self.side_mirror_status.appendPlainText("━━━━━━━━━━━━━━━")
-            self.side_mirror_status.appendPlainText("🏆 CDN RANKINGS:")
-            for l in cdn_ranking_lines:
-                self.side_mirror_status.appendPlainText(f"  {l}")
-
+        fastest_cdns = get_session_cdns()
         cdn_section = ""
         cdn_summary = ""
         if fastest_cdns:
@@ -3049,9 +3066,7 @@ class LibgenDialog(QDialog):
             f"{cdn_section}\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         )
-        # Always log stats box to Live Log and side mirror status
         self.append_log(stats_box)
-        self.side_mirror_status.appendPlainText(f"📊 [SUMMARY] ✓ {len(downloaded_items)} dl • 📦 {size_str} • ⚡ {speed_str} • ⏱ {time_str}")
 
         stats_summary = {
             "time_str": time_str,
