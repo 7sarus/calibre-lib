@@ -6,9 +6,7 @@
 [![GitHub all releases](https://img.shields.io/github/downloads/7sarus/calibre-lib/total)](https://github.com/7sarus/calibre-lib/releases)
 [![License: WTFPL](https://img.shields.io/badge/License-WTFPL-brightgreen.svg)](LICENSE)
 
-A native **Calibre User Interface Action Plugin** that adds a dedicated **LibGen Downloader** button to Calibre's main toolbar.
-
-Search books directly across Library Genesis mirrors, lock or filter by language and format (EPUB, PDF, MOBI, AZW3, etc.), queue multiple books into a **Bulk Download Queue**, and download them all together directly into your Calibre library.
+A Calibre plugin that adds a toolbar button (`Ctrl+Shift+L`) for searching, queueing, and downloading books from Library Genesis directly into your Calibre library.
 
 <p align="center">
   <img src="images/screenshot.jpg" alt="LibGen Downloader v1.90b running in Calibre" width="850">
@@ -18,47 +16,19 @@ Search books directly across Library Genesis mirrors, lock or filter by language
 
 ---
 
-## ✨ Features
+## Features
 
-- **Dedicated Toolbar Button & UI**: Adds a **LibGen** action button directly to Calibre's toolbar (`Ctrl+Shift+L` shortcut).
-- **Field-Targeted Search**: Search specifically by **All Fields**, **Title**, **Author**, **Series**, **Publisher**, **Year**, or **ISBN**.
-- **Mirror Latency & Bandwidth Benchmarking**:
-  - Choose a specific mirror or leave on **Auto (Failover)**.
-  - Dedicated **Mirrors & Health** tab: tests connection latency (TTFB `ms`) and live download bandwidth (`KB/s` / `MB/s`).
-  - **Sort by Speed**: One-click sorting that reorders mirrors by bandwidth/latency and saves the fastest mirror as primary.
-  - Set preferred mirrors as Primary manually or automatically.
-- **Custom Mirrors**: Add, test, and persist your own custom LibGen mirror URLs directly from the UI.
-- **Bulk Download Queue**:
-  - Multi-row selection using standard click, `Ctrl+Click`, `Shift+Click`, or `Ctrl+A`.
-  - Add to queue instantly with **`Ctrl+Shift+A`**, right-click **context menu**, or the bottom button.
-  - Seamless workflow: focus remains in the search bar to keep queueing without tab switching.
-  - Download all queued books in sequence with automatic **multi-mirror failover** across all active mirrors.
-  - **Live Scrolling Activity Log**: Monospace terminal log embedded in the queue tab showing real-time network events, mirror failovers, and chunk streaming progress.
-  - **Retry Failed Downloads**: One-click recovery button that re-queues and retries failed books against alternate mirrors.
-  - Or click **Download Selected** for immediate one-click downloading.
-- **Main Library Context Menu**: Right-click any book in Calibre's main library list to instantly **"Search LibGen for Author: <name>"**. Automatically launches search targeted to the Author field with clean filter resets.
-- **Controlled Library Ingestion & Review**:
-  - Downloads are decoupled into a sandbox directory and never forced into your Calibre library mid-stream.
-  - Upon download completion or user abort ("Stop Download"), an **Import Review Modal** appears.
-  - Review all downloaded files with options to **Import All**, **Import Selected**, or **Discard / Skip**.
-
-- **Category Filtering (Fiction vs Sci-Tech / Academic)**:
-  - Dedicated **Cat** selector: filter searches directly to **Fiction**, **Sci-Tech / Non-Fiction Books**, **Scientific Articles / Papers**, **Comics**, **Magazines**, or **All Categories**.
-  - Targets LibGen's native `topics[]` database partitions.
-- **Adaptive Working Mirror Memory**:
-  - Automatically remembers the last mirror that successfully completed a search or download.
-  - Prioritizes the proven working mirror first for all subsequent searches and download candidate URLs.
-- **Language & Format Locking**:
-  - Filter or lock to a preferred language (English, Spanish, French, German, Russian, etc.).
-  - Filter or lock to a preferred format (EPUB, PDF, MOBI, AZW3, DJVU, CBR, CBZ).
-  - Configurable filter modes:
-    - **Prioritize**: Surfaces preferred language/format books at the top.
-    - **Strict**: Only returns books matching the chosen criteria.
-- **Zero External Dependencies**: Uses Calibre's bundled Python 3, Qt bindings (`qt.core`), and BeautifulSoup (`bs4`).
+- **Field-targeted search**: Search across all fields or narrow by title, author, series, publisher, year, or ISBN. Supports LibGen topic filters (fiction, sci-tech, papers, comics, magazines).
+- **Format and language filtering**: Prioritize or strictly require target formats (EPUB, PDF, MOBI, AZW3, DJVU) and languages.
+- **Mirror benchmarking and failover**: Measures latency and live bandwidth to pick the fastest responsive mirror. Automatically switches mirrors if an active download drops or stalls.
+- **Bulk queue**: Select multiple results (`Ctrl+Shift+A` or context menu) and run downloads sequentially in the background while keeping focus in the search box.
+- **Staged library import**: Downloads land in a staging directory first. A review dialog lets you inspect files and choose what to import or skip before touching your library.
+- **Library shortcuts**: Right-click any book in Calibre to search LibGen for that author.
+- **Zero external dependencies**: Uses only Calibre's bundled Python, Qt, and BeautifulSoup.
 
 ---
 
-## 🚀 Installation
+## Installation
 
 ### Quick Install (Pre-built Release)
 
@@ -78,22 +48,18 @@ make install
 
 ---
 
-## 📖 Usage
+## Usage
 
 1. Open **Calibre**.
 2. Click the **LibGen** button on the main toolbar (or press `Ctrl+Shift+L`).
-3. Type your search query and choose your preferred language and format.
-4. From the search results:
-   - Select rows using click, `Ctrl+Click`, or `Shift+Click`.
-    - Press **`Ctrl+Shift+A`**, right-click and select **Add to Queue**, or click the bottom button. Focus automatically stays in the search box so you can keep searching and adding.
-    - When ready, switch to the **Queue** tab and click **Start Bulk Download**.
-    - Or click **Download Selected** to immediately download and import.
-5. As books finish downloading, they will automatically appear in your Calibre library!
-
+3. Type your query, choose language/format filters, and press **Search**.
+4. Select books and press `Ctrl+Shift+A` (or click **Add to Queue**). Focus stays in the search box to keep queueing.
+5. Switch to the **Queue** tab and click **Start Bulk Download** (or click **Download Selected** for an immediate run).
+6. Review downloaded files in the import dialog to add them to your Calibre library.
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 In Calibre, go to:
 **Preferences** -> **Plugins** -> **User interface action plugins** -> select **LibGen Downloader** -> click **Customize plugin**.
@@ -109,7 +75,7 @@ Configure:
 
 ---
 
-## 🛠️ Development & Testing
+## Development & Testing
 
 - Build the `.zip` package:
   ```bash
@@ -126,19 +92,19 @@ Configure:
 
 ---
 
-## 📈 Star History
+## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=7sarus/calibre-lib&type=Date)](https://star-history.com/#7sarus/calibre-lib&Date)
 
 ---
 
-## 🙏 Acknowledgements & Disclaimer
+## Acknowledgements & Notes
 
-- **Upstream Origin**: This project is adapted and re-architected from [`obsfx/libgen-downloader`](https://github.com/obsfx/libgen-downloader) by Ömercan Balandı, translating its mirror handling and scraping concepts into a native Python/Qt Calibre plugin.
-- **AI / LLM Assisted**: This rewrite was developed with the assistance of an LLM pair programmer.
-- **For Fun**: This is strictly a "just for fun" experimental hobby project created for personal exploration and enjoyment.
+- **Upstream origin**: Adapted from [`obsfx/libgen-downloader`](https://github.com/obsfx/libgen-downloader) by Ömercan Balandı, porting mirror scraping and download handling to a native Calibre Qt plugin.
+- **LLM-assisted development**: Built with the assistance of an LLM pair programmer.
+- **Project status**: An open-source hobby project maintained for personal reading workflows.
 
-## 💬 Community & Support
+## Community & Support
 
 <p align="center">
   <a href="https://t.me/devvdump" target="_blank">
@@ -150,8 +116,13 @@ Join our community on Telegram: [**t.me/devvdump**](https://t.me/devvdump) for d
 
 ---
 
-## 📦 Releases & Version History
+## Releases & Version History
 
+- **[v1.90b "Ducky" (Beta Release)](https://github.com/7sarus/calibre-lib/releases/tag/v1.90b)**:
+  - Fixed silent download and search failures by retiring broken legacy mirrors.
+  - Added modular session-isolated CDN tracking and diagnostic clipboard reporting.
+  - Streamlined queue interface with hidden debug/easter-egg controls and clean action buttons.
+  - Added offline test suite covering UI initialization, mirror selection, and queue operations.
 - **[v1.80b-rc1 "Mithrandir" (Beta Release)](https://github.com/7sarus/calibre-lib/releases)**:
   - **Modular Subdialogs**: `CsvImportDialog` and `ReviewImportDialog` extracted to standalone modules; purged 580+ lines from main dialog.
   - **Decoupled Providers**: Bookracy provider operates autonomously with native JSON parsing and direct fallback probing.
@@ -197,7 +168,6 @@ Join our community on Telegram: [**t.me/devvdump**](https://t.me/devvdump) for d
 
 ---
 
-## 📜 License
+## License
 
 [WTFPL](LICENSE)
-
