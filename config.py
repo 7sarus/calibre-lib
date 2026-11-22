@@ -28,9 +28,9 @@ from qt.core import (
 )
 
 # Plugin Version definitions
-PLUGIN_VERSION = (1, 8, 0)
-_BASE_VERSION_STR = "v1.80b-rc1"
-_BUILD_COMMIT = "165"
+PLUGIN_VERSION = (1, 9, 0)
+_BASE_VERSION_STR = "v1.90b"
+_BUILD_COMMIT = "169"
 
 
 

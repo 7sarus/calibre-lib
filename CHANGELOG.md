@@ -1,6 +1,6 @@
 # Changelog
 
-## [v1.80b-rc2] - 2026-11-22
+## [v1.90b "Ducky"] - 2026-11-22
 
 ### What's New
 - Added a one-click "Copy Diagnostics" button to the Mirrors and Queue tabs to easily copy system details, Calibre version, and mirror logs for bug reports.
