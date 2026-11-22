@@ -16,6 +16,20 @@ from urllib.parse import urljoin, quote_plus, urlparse
 from bs4 import BeautifulSoup
 from calibre import browser
 
+try:
+    from calibre_plugins.libgen_store.config import PERMANENT_MIRRORS, DEFAULT_FALLBACK_MIRRORS
+except ImportError:
+    try:
+        from config import PERMANENT_MIRRORS, DEFAULT_FALLBACK_MIRRORS
+    except ImportError:
+        PERMANENT_MIRRORS = ("https://libgen.li",)
+        DEFAULT_FALLBACK_MIRRORS = (
+            "https://libgen.vg",
+            "https://libgen.la",
+            "https://libgen.gl",
+            "https://libgen.bz",
+        )
+
 # Use lxml if available (2-4× faster parsing), fall back to html.parser
 try:
     import lxml  # noqa: F401
@@ -66,22 +80,8 @@ class LibgenBook:
 
 
 class LibgenScraper:
-    DEFAULT_MIRRORS = [
-        "https://libgen.li",
-        "https://libgen.me",
-        "https://libgen.vg",
-        "https://libgen.gl",
-        "https://libgen.bz",
-        "https://libgen.la",
-    ]
-
-    DEFAULT_FALLBACK_MIRRORS = (
-        "https://libgen.me",
-        "https://libgen.vg",
-        "https://libgen.gl",
-        "https://libgen.bz",
-        "https://libgen.la",
-    )
+    DEFAULT_FALLBACK_MIRRORS = DEFAULT_FALLBACK_MIRRORS
+    DEFAULT_MIRRORS = list(dict.fromkeys(list(PERMANENT_MIRRORS) + list(DEFAULT_FALLBACK_MIRRORS)))
 
     USER_AGENT = (
         "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0"

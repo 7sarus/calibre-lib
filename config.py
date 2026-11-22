@@ -30,25 +30,12 @@ from qt.core import (
 # Plugin Version definitions
 PLUGIN_VERSION = (1, 8, 0)
 _BASE_VERSION_STR = "v1.80b-rc1"
-_BUILD_COMMIT = "160"
+_BUILD_COMMIT = "165"
 
 
 
 
 def _resolve_version_str():
-    try:
-        import subprocess
-
-        cmd = ["git", "rev-list", "--count", "HEAD"]
-        cnt = (
-            subprocess.check_output(cmd, cwd=os.path.dirname(__file__), stderr=subprocess.DEVNULL)
-            .decode()
-            .strip()
-        )
-        if cnt:
-            return f"{_BASE_VERSION_STR}-{cnt}"
-    except Exception:
-        pass
     if _BUILD_COMMIT:
         return f"{_BASE_VERSION_STR}-{_BUILD_COMMIT}"
     return _BASE_VERSION_STR
@@ -61,14 +48,12 @@ prefs = JSONConfig("plugins/libgen_store")
 
 PERMANENT_MIRRORS = (
     "https://libgen.li",
-    "https://libgen.me",
 )
 DEFAULT_FALLBACK_MIRRORS = (
-    "https://libgen.me",
     "https://libgen.vg",
+    "https://libgen.la",
     "https://libgen.gl",
     "https://libgen.bz",
-    "https://libgen.la",
 )
 _VALID_MIRROR_RE = re.compile(r"^https?://(?:(?:www\.)?libgen\.[a-z]{2,}|api\.bookracy\.com)(?::\d+)?/?$", re.IGNORECASE)
 
@@ -228,12 +213,6 @@ def record_mirror_latency(mirror_url, latency_ms):
         else:
             lats.pop(clean, None)
         prefs["mirror_latencies"] = lats
-        # Best latency becomes primary if valid
-        valid_tested = {k: v for k, v in lats.items() if isinstance(v, (int, float)) and v > 0}
-        if valid_tested:
-            best_mirror = min(valid_tested, key=valid_tested.get)
-            if best_mirror in get_mirrors():
-                prefs["primary_mirror"] = best_mirror
 
 def record_successful_mirror(mirror_url):
     """Persists mirror success and promotes the most successful mirror to primary."""
@@ -337,12 +316,22 @@ def set_mirror_order(sorted_mirrors):
     prefs["fallback_mirrors"] = ", ".join(remaining)
 
 
+_SESSION_CDN_SPEEDS = {}
+
+
+def reset_session_cdns():
+    """Clears CDN speeds recorded during the current download session."""
+    with _prefs_lock:
+        _SESSION_CDN_SPEEDS.clear()
+
+
 def record_cdn_speed(host, speed_kb):
     """Records CDN bandwidth and saves the top fastest CDNs to preferences."""
     with _prefs_lock:
         if not host or speed_kb <= 0:
             return
         host = host.lower().strip()
+        _SESSION_CDN_SPEEDS[host] = max(_SESSION_CDN_SPEEDS.get(host, 0.0), round(float(speed_kb), 1))
         cdns = prefs.get("fastest_cdns", {})
         if not isinstance(cdns, dict):
             cdns = {}
@@ -352,6 +341,12 @@ def record_cdn_speed(host, speed_kb):
         # Keep top 10 fastest
         sorted_cdns = dict(sorted(cdns.items(), key=lambda item: item[1], reverse=True)[:10])
         prefs["fastest_cdns"] = sorted_cdns
+
+
+def get_session_cdns():
+    """Returns a list of (host, speed_kb) tuples recorded during the active session, sorted by bandwidth descending."""
+    with _prefs_lock:
+        return sorted(_SESSION_CDN_SPEEDS.items(), key=lambda item: item[1], reverse=True)
 
 
 def get_fastest_cdns():
